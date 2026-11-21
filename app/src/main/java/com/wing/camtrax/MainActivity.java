@@ -98,10 +98,13 @@ public class MainActivity extends AppCompatActivity {
         });
 
         setContentView(webView);
-        if (!hasCamera() || !hasLocation() || !hasMic()) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO,
-                    Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, CAMERA_REQ);
-        }
+        java.util.List<String> need = new java.util.ArrayList<>();
+        if (!hasCamera()) need.add(Manifest.permission.CAMERA);
+        if (!hasMic()) need.add(Manifest.permission.RECORD_AUDIO);
+        if (!hasLocation()) { need.add(Manifest.permission.ACCESS_FINE_LOCATION); need.add(Manifest.permission.ACCESS_COARSE_LOCATION); }
+        if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED)
+            need.add("android.permission.POST_NOTIFICATIONS");
+        if (!need.isEmpty()) ActivityCompat.requestPermissions(this, need.toArray(new String[0]), CAMERA_REQ);
 
         String remote = BuildConfig.PAGES_URL;
         if (remote == null || remote.isEmpty()) {
@@ -123,6 +126,32 @@ public class MainActivity extends AppCompatActivity {
                 == PackageManager.PERMISSION_GRANTED
                 || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
+    }
+
+    // ---------------- screen off / app switch ----------------
+    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable bgFallback = () -> {
+        BgRecordService s = BgRecordService.instance;
+        if (s != null && !s.isActive()) s.begin();   // page never signalled: start anyway
+    };
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (webView != null) webView.evaluateJavascript("window.__appHidden&&window.__appHidden()", null);
+        if (BgRecordService.isArmed()) ui.postDelayed(bgFallback, 3000);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        ui.removeCallbacks(bgFallback);
+        BgRecordService s = BgRecordService.instance;
+        if (s != null && s.isActive()) {
+            s.end(() -> { if (webView != null) webView.evaluateJavascript("window.__bgEnded&&window.__bgEnded(" + s.clipsThisRun() + ")", null); });
+        } else if (webView != null) {
+            webView.evaluateJavascript("window.__bgEnded&&window.__bgEnded(0)", null);
+        }
     }
 
     private boolean hasMic() {

@@ -119,6 +119,12 @@
   #dialog.open { display:flex; }
   #dialog .box { background:#1b1e24; border:1px solid var(--line); border-radius:12px; padding:18px; width:min(340px, 90vw); }
   #dialog p { margin-bottom:14px; line-height:1.5; white-space:pre-line; word-break:break-all; }
+  /* black-screen mode: looks off, keeps recording */
+  #blackout { position:fixed; inset:0; background:#000; z-index:60; display:none; cursor:none; }
+  #blackout.on { display:block; }
+  #blkRec { position:absolute; left:14px; top:12px; color:#ff3b30; opacity:.35; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #blkHint { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#777; font-size:15px; opacity:0; transition:opacity .3s; text-align:center; }
+  #blkHint.show { opacity:1; }
   #toast { position:absolute; left:50%; top:18%; transform:translateX(-50%); background:rgba(0,0,0,.8); padding:9px 16px; border-radius:10px; font-size:14px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9; }
   #toast.show { opacity:1; }
   #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .25s; }
@@ -153,6 +159,7 @@
 
   <div class="rail">
     <div class="rcol">
+      <button class="rbtn" id="blackBtn" title="โหมดจอดำ (อัดต่อ)">🌑</button>
       <button class="rbtn" id="dashBtn" title="แสดง/ซ่อน ความเร็วและตำแหน่ง">🧭</button>
       <button class="rbtn hide-mini" id="menuBtn" title="ตั้งค่า">⚙️</button>
       <button class="rbtn hide-mini" id="galleryBtn" title="ดูภาพ/วิดีโอที่บันทึก">🖼️</button>
@@ -199,6 +206,9 @@
     <label class="small">ความละเอียดวิดีโอ</label>
     <select id="res"><option value="720">720p (ประหยัดพื้นที่)</option><option value="1080">1080p (คมชัด)</option></select>
     <label class="check"><input type="checkbox" id="autoCar"> เปิดแอปแล้วเข้าโหมดกล้องติดรถทันที</label>
+    <label class="check"><input type="checkbox" id="autoBlack"> เข้าโหมดจอดำ 🌑 อัตโนมัติเมื่อเริ่มโหมดกล้องติดรถ</label>
+    <label class="check"><input type="checkbox" id="bgRec" checked> อัดต่อเมื่อปิดจอหรือสลับไปแอปอื่น</label>
+    <div class="hint" id="bgHint">ระหว่างปิดจอจะอัดวิดีโอ เสียง และเส้นทาง GPS ต่อ (ไม่มีกรอบตรวจจับ/ตัวหนังสือบนวิดีโอ) ต้องใช้แอป v1.6 ขึ้นไป</div>
     <label class="check"><input type="checkbox" id="stampOn" checked> ใส่วันที่-เวลาในวิดีโอ/ภาพ</label>
     <label class="check"><input type="checkbox" id="boxRec" checked> ใส่กรอบตรวจจับในวิดีโอ/ภาพ</label>
     <label class="check"><input type="checkbox" id="audioOn" checked> 🎤 อัดเสียงไปด้วย</label>
@@ -301,6 +311,7 @@
 
   <div id="dialog"><div class="box"><p id="dlgText"></p><div class="row"><button class="btn" id="dlgNo">ยกเลิก</button><button class="btn on" id="dlgYes">ตกลง</button></div></div></div>
 
+  <div id="blackout"><div id="blkRec"></div><div id="blkHint">แตะอีกครั้งเพื่อเปิดจอ</div></div>
   <div id="toast"></div>
 </div>
 
@@ -314,7 +325,7 @@ let model = null, stream = null, facing = "environment", running = false, device
 let tracks = [], nextId = 1, lockedId = null, lastTime = performance.now(), fps = 0;
 
 // ---------- Settings (remembered on this device) ----------
-const DEF = { quota: "4", segLen: "3", res: "720", autoCar: false, stampOn: true, boxRec: true, detectOn: true, conf: "50", filter: "", gpsOn: true, gpsStamp: true, plateOn: true, plateMin: "10", plateDebug: false, plateW: "5", cloudProv: "off", cloudKey: "", audioOn: true, dualOn: false, dualLayout: "pip", placeOn: true, showDash: true, dashCompact: false, showZoom: true, showPills: true, showPip: true, mini: false };
+const DEF = { quota: "4", segLen: "3", res: "720", autoCar: false, stampOn: true, boxRec: true, detectOn: true, conf: "50", filter: "", gpsOn: true, gpsStamp: true, plateOn: true, plateMin: "10", plateDebug: false, plateW: "5", cloudProv: "off", cloudKey: "", audioOn: true, dualOn: false, dualLayout: "pip", placeOn: true, showDash: true, dashCompact: false, showZoom: true, showPills: true, showPip: true, mini: false, autoBlack: false, bgRec: true };
 let S = { ...DEF };
 try { S = { ...DEF, ...JSON.parse(localStorage.getItem("ot-settings") || "{}") }; } catch (e) {}
 const saveS = () => { try { localStorage.setItem("ot-settings", JSON.stringify(S)); } catch (e) {} };
@@ -326,7 +337,7 @@ $("plateW").oninput = e => { S.plateW = e.target.value; $("plateWVal").textConte
 $("cloudProv").value = S.cloudProv; $("cloudKey").value = S.cloudKey;
 $("cloudProv").onchange = e => { S.cloudProv = e.target.value; saveS(); showCloudInfo(); };
 $("cloudKey").onchange = e => { S.cloudKey = e.target.value.trim(); saveS(); showCloudInfo(); };
-["autoCar", "stampOn", "boxRec", "detectOn", "gpsOn", "gpsStamp", "plateOn", "audioOn", "dualOn", "placeOn", "showDash", "dashCompact", "showZoom", "showPills", "showPip", "plateDebug"].forEach(k => { $(k).checked = S[k]; $(k).addEventListener("change", e => { S[k] = e.target.checked; saveS(); applyView(); }); });
+["autoCar", "stampOn", "boxRec", "detectOn", "gpsOn", "gpsStamp", "plateOn", "audioOn", "dualOn", "placeOn", "showDash", "dashCompact", "showZoom", "showPills", "showPip", "plateDebug", "autoBlack", "bgRec"].forEach(k => { $(k).checked = S[k]; $(k).addEventListener("change", e => { S[k] = e.target.checked; saveS(); applyView(); }); });
 
 // ---------- Screen layout: minimize & widget visibility ----------
 function applyView() {
@@ -1360,19 +1371,24 @@ async function startRecordingInner() {
   startGPS();
   startSegment();
   recStart = Date.now();
-  recClock = setInterval(() => { const s = Math.floor((Date.now() - recStart) / 1000); $("recTime").textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 500);
+  recClock = setInterval(() => { const s = Math.floor((Date.now() - recStart) / 1000), t = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; $("recTime").textContent = t; $("blkRec").textContent = "● REC " + t; }, 500);
+  armBackground();
   $("recBtn").classList.add("on"); $("recPill").classList.add("on"); $("keepBtn").disabled = false;
   if (Bridge) Bridge.keepScreenOn(true);
   if (!Bridge) toast("ในเบราว์เซอร์: แต่ละคลิปจะถูกดาวน์โหลด (ไม่ลบวนอัตโนมัติ)", 3500);
 }
-function stopRecording() {
+function stopRecording(opts) {
+  opts = opts || {};
   if (!recording) return;
+  $("blkRec").textContent = "";
+  if (!opts.handoff && Bridge && typeof Bridge.bgDisarm === "function") Bridge.bgDisarm();
   recording = false; clearTimeout(segTimer); clearInterval(recClock); cancelAnimationFrame(recDrawH);
   if (seg && seg.rec.state !== "inactive") seg.rec.stop();
   seg = null;
   setTimeout(() => { if (!recording) stopMic(); }, 500);
   $("recBtn").classList.remove("on"); $("recPill").classList.remove("on"); $("keepBtn").disabled = true; $("keepBtn").classList.remove("active");
-  if (Bridge && !carMode) Bridge.keepScreenOn(false);
+  if (opts.handoff) return;
+  if (Bridge && !carMode && !blackOn) Bridge.keepScreenOn(false);
   if (carMode) setCarMode(false);
   toast("หยุดอัดแล้ว");
 }
@@ -1391,12 +1407,66 @@ async function setCarMode(on) {
     if (Bridge) Bridge.keepScreenOn(true);
     toast("🚗 โหมดกล้องติดรถ: อัดวนอัตโนมัติ", 2500);
     $("drawer").classList.remove("open");
+    if (S.autoBlack) setTimeout(() => { if (carMode) setBlack(true); }, 3000);
   } else {
     if (recording) { carMode = false; stopRecording(); }
-    if (Bridge) Bridge.keepScreenOn(false);
+    if (Bridge && !blackOn) Bridge.keepScreenOn(false);
   }
 }
 $("carToggle").onclick = () => setCarMode(!carMode);
+
+// ---------- 🌑 black-screen mode: screen looks off, everything keeps running ----------
+let blackOn = false, blackTapAt = 0;
+function setBlack(on) {
+  blackOn = on;
+  $("blackout").classList.toggle("on", on);
+  $("blkHint").classList.remove("show");
+  if (Bridge && typeof Bridge.setBrightness === "function") Bridge.setBrightness(on ? 0.01 : -1);
+  if (Bridge) Bridge.keepScreenOn(on || recording || carMode);
+  if (on) { $("drawer").classList.remove("open"); $("camPicker").classList.remove("open"); }
+  else toast(recording ? "เปิดจอแล้ว — ยังอัดอยู่" : "เปิดจอแล้ว");
+}
+$("blackBtn").onclick = () => { setBlack(true); };
+$("blackout").onclick = () => {
+  const now = Date.now();
+  if (now - blackTapAt < 1600) { blackTapAt = 0; setBlack(false); return; }
+  blackTapAt = now; $("blkHint").classList.add("show");
+  setTimeout(() => $("blkHint").classList.remove("show"), 1600);
+};
+
+// ---------- record on with the screen off: hand over to the app's background recorder ----------
+const bgCapable = () => !!(Bridge && typeof Bridge.bgArm === "function" && S.bgRec);
+let bgResume = null;
+function armBackground() {
+  if (!bgCapable()) return;
+  Bridge.bgArm(JSON.stringify({ segSec: +S.segLen * 60, quota: +S.quota * 1e9, audio: !!S.audioOn, gps: !!S.gpsOn, res: S.res, facing }));
+}
+$("bgRec").addEventListener("change", () => { if (!Bridge || typeof Bridge.bgArm !== "function") return; if (S.bgRec && recording) armBackground(); else if (!S.bgRec) Bridge.bgDisarm(); });
+if (!(Bridge && typeof Bridge.bgArm === "function")) $("bgHint").textContent += " — แอปที่ติดตั้งอยู่ยังไม่รองรับ";
+function handOffToBackground() {
+  if (!recording || !bgCapable() || bgResume) return;
+  // screen turned off / another app opened: close this clip, free the camera, let the app keep recording
+  bgResume = { car: carMode, black: blackOn };
+  stopRecording({ handoff: true });
+  carMode = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stopSecond(); stopMic(); stopGPS();
+  stream = null; running = false;
+  Bridge.bgReady();
+}
+window.__appHidden = handOffToBackground;
+document.addEventListener("visibilitychange", () => { if (document.hidden) handOffToBackground(); });
+// called by the app after its background recorder has stopped and released the camera
+window.__bgEnded = async (clips) => {
+  const r = bgResume; bgResume = null;
+  if (!r) return;
+  await startCam();
+  if (!stream) return;
+  if (r.car) await setCarMode(true); else await startRecording();
+  if (r.black) setBlack(true);
+  refreshUsage();
+  toast(clips > 0 ? `อัดต่อระหว่างปิดจอแล้ว ${clips} คลิป · กลับมาอัดในแอปต่อ` : "กลับมาอัดในแอปต่อ", 3000);
+};
 $("carBtn").onclick = () => setCarMode(true);
 
 // ---------- Storage usage ----------

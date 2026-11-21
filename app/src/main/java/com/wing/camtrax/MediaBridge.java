@@ -115,6 +115,31 @@ public class MediaBridge {
         return bo.toString("UTF-8");
     }
 
+    // ---------------- background recording & black screen ----------------
+    /** Page started recording: arm the background recorder (must happen while visible). */
+    @JavascriptInterface
+    public void bgArm(String json) { activity.runOnUiThread(() -> BgRecordService.arm(activity, json)); }
+
+    /** Page stopped recording on purpose. */
+    @JavascriptInterface
+    public void bgDisarm() { activity.runOnUiThread(() -> BgRecordService.disarm(activity)); }
+
+    /** Page has released the camera after the screen went off: start recording in the background. */
+    @JavascriptInterface
+    public void bgReady() {
+        activity.runOnUiThread(() -> { BgRecordService s = BgRecordService.instance; if (s != null) s.begin(); });
+    }
+
+    /** 0..1 for this app's window, or -1 to follow the phone's setting. */
+    @JavascriptInterface
+    public void setBrightness(double level) {
+        activity.runOnUiThread(() -> {
+            android.view.WindowManager.LayoutParams lp = activity.getWindow().getAttributes();
+            lp.screenBrightness = level < 0 ? android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : (float) Math.max(0.01, Math.min(1, level));
+            activity.getWindow().setAttributes(lp);
+        });
+    }
+
     MediaBridge(Activity a) {
         activity = a;
         resolver = a.getContentResolver();
