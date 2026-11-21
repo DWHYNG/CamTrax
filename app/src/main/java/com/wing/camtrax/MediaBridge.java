@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.util.Size;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
+import android.webkit.WebView;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Environment;
@@ -32,6 +33,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -52,6 +55,65 @@ public class MediaBridge {
     private final Map<String, Rec> open = new HashMap<>();
 
     private static class Rec { Uri uri; OutputStream os; String name; }
+
+    private WebView webView;
+    void setWebView(WebView w) { webView = w; }
+
+    /**
+     * Reads a licence plate with an online service on a background thread (never blocks recording),
+     * then calls window.__plateResult(id, body, httpCode) in the page.
+     */
+    @JavascriptInterface
+    public void cloudPlate(String id, String provider, String key, String b64) {
+        new Thread(() -> {
+            int code = 0;
+            String body;
+            try {
+                byte[] img = Base64.decode(b64, Base64.DEFAULT);
+                boolean pr = "pr".equals(provider);
+                URL url = new URL(pr ? "https://api.platerecognizer.com/v1/plate-reader/"
+                                     : "https://api.iapp.co.th/license-plate-recognition/file");
+                String boundary = "----CamTrax" + System.nanoTime();
+                HttpURLConnection c = (HttpURLConnection) url.openConnection();
+                c.setConnectTimeout(8000);
+                c.setReadTimeout(10000);
+                c.setDoOutput(true);
+                c.setRequestMethod("POST");
+                c.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+                if (pr) c.setRequestProperty("Authorization", "Token " + key);
+                else c.setRequestProperty("apikey", key);
+                try (OutputStream os = c.getOutputStream()) {
+                    StringBuilder sb = new StringBuilder();
+                    if (pr) sb.append("--").append(boundary).append("\r\nContent-Disposition: form-data; name=\"regions\"\r\n\r\nth\r\n");
+                    sb.append("--").append(boundary).append("\r\nContent-Disposition: form-data; name=\"")
+                      .append(pr ? "upload" : "file").append("\"; filename=\"plate.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n");
+                    os.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+                    os.write(img);
+                    os.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+                }
+                code = c.getResponseCode();
+                InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+                body = in == null ? "" : readAll(in);
+                c.disconnect();
+            } catch (Exception e) {
+                body = "{\"error\":" + JSONObject.quote(String.valueOf(e)) + "}";
+                code = 0;
+            }
+            final String js = "window.__plateResult&&window.__plateResult(" + JSONObject.quote(id) + ","
+                    + JSONObject.quote(body) + "," + code + ")";
+            final WebView w = webView;
+            if (w != null) w.post(() -> w.evaluateJavascript(js, null));
+        }).start();
+    }
+
+    private static String readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+        in.close();
+        return bo.toString("UTF-8");
+    }
 
     MediaBridge(Activity a) {
         activity = a;

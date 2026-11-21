@@ -208,9 +208,19 @@
     <div class="hint" id="modelSrc" style="margin-top:12px">โมเดล AI: —</div>
 
     <h2>🚘 อ่านป้ายทะเบียน</h2>
-    <label class="check"><input type="checkbox" id="plateOn" checked> อ่านป้ายทะเบียนรถที่ตรวจเจอ</label>
-    <label class="small">อ่านเฉพาะรถที่ใหญ่กว่า <span id="plateMinVal">15</span>% ของจอ (รถที่อยู่ใกล้)</label>
-    <input type="range" id="plateMin" min="5" max="40" value="15">
+    <label class="check"><input type="checkbox" id="plateOn" checked> ค้นหาและอ่านป้ายทะเบียนอัตโนมัติ</label>
+    <div class="hint" id="detStatus">ตัวหาป้าย: กำลังโหลด…</div>
+    <label class="small">บริการอ่านป้ายออนไลน์</label>
+    <select id="cloudProv">
+      <option value="off">ไม่ใช้ (อ่านในเครื่อง — ช้ากว่าและพลาดบ่อยกว่า)</option>
+      <option value="pr">Plate Recognizer (ฟรี 2,500 ครั้ง/เดือน)</option>
+      <option value="iapp">iApp (บริษัทไทย)</option>
+    </select>
+    <label class="small">API key</label>
+    <input type="password" id="cloudKey" placeholder="วาง API key ที่นี่" autocomplete="off" style="font:inherit;font-size:14px;width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:#20242b;color:var(--text)">
+    <div class="hint" id="cloudInfo">สมัครฟรีที่ app.platerecognizer.com หรือ iapp.co.th แล้วนำ key มาวาง · ส่งไปอ่านครั้งเดียวต่อ 1 ป้าย</div>
+    <label class="small">อ่านเมื่อป้ายกว้างกว่า <span id="plateWVal">5</span>% ของจอ</label>
+    <input type="range" id="plateW" min="2" max="20" value="5">
     <div class="hint" id="plateStatus">ครั้งแรกต้องต่อเน็ตเพื่อโหลดตัวอ่านภาษาไทย (~3 MB)</div>
     <div class="hint">💡 อ่านได้ดีขึ้นเมื่อตั้งความละเอียดเป็น 1080p · กด 🔍 แล้วเล็งป้ายให้อยู่ในกรอบกลางจอเพื่อสแกนเอง</div>
     <label class="check"><input type="checkbox" id="plateDebug"> แสดงภาพที่ใช้อ่านป้าย (ตรวจสอบปัญหา)</label>
@@ -294,15 +304,18 @@ let model = null, stream = null, facing = "environment", running = false, device
 let tracks = [], nextId = 1, lockedId = null, lastTime = performance.now(), fps = 0;
 
 // ---------- Settings (remembered on this device) ----------
-const DEF = { quota: "4", segLen: "3", res: "720", autoCar: false, stampOn: true, boxRec: true, detectOn: true, conf: "50", filter: "", gpsOn: true, gpsStamp: true, plateOn: true, plateMin: "10", plateDebug: false, audioOn: true, dualOn: false, dualLayout: "pip", placeOn: true, showDash: true, dashCompact: false, showZoom: true, showPills: true, showPip: true, mini: false };
+const DEF = { quota: "4", segLen: "3", res: "720", autoCar: false, stampOn: true, boxRec: true, detectOn: true, conf: "50", filter: "", gpsOn: true, gpsStamp: true, plateOn: true, plateMin: "10", plateDebug: false, plateW: "5", cloudProv: "off", cloudKey: "", audioOn: true, dualOn: false, dualLayout: "pip", placeOn: true, showDash: true, dashCompact: false, showZoom: true, showPills: true, showPip: true, mini: false };
 let S = { ...DEF };
 try { S = { ...DEF, ...JSON.parse(localStorage.getItem("ot-settings") || "{}") }; } catch (e) {}
 const saveS = () => { try { localStorage.setItem("ot-settings", JSON.stringify(S)); } catch (e) {} };
 
 CLASSES.slice().sort().forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("filter").appendChild(o); });
 ["quota", "segLen", "res", "filter", "conf", "dualLayout"].forEach(k => { $(k).value = S[k]; $(k).addEventListener("change", e => { S[k] = e.target.value; saveS(); if (k === "quota") refreshUsage(); }); });
-$("plateMin").value = S.plateMin; $("plateMinVal").textContent = S.plateMin;
-$("plateMin").oninput = e => { S.plateMin = e.target.value; $("plateMinVal").textContent = e.target.value; saveS(); };
+$("plateW").value = S.plateW; $("plateWVal").textContent = S.plateW;
+$("plateW").oninput = e => { S.plateW = e.target.value; $("plateWVal").textContent = e.target.value; saveS(); };
+$("cloudProv").value = S.cloudProv; $("cloudKey").value = S.cloudKey;
+$("cloudProv").onchange = e => { S.cloudProv = e.target.value; saveS(); showCloudInfo(); };
+$("cloudKey").onchange = e => { S.cloudKey = e.target.value.trim(); saveS(); showCloudInfo(); };
 ["autoCar", "stampOn", "boxRec", "detectOn", "gpsOn", "gpsStamp", "plateOn", "audioOn", "dualOn", "placeOn", "showDash", "dashCompact", "showZoom", "showPills", "showPip", "plateDebug"].forEach(k => { $(k).checked = S[k]; $(k).addEventListener("change", e => { S[k] = e.target.checked; saveS(); applyView(); }); });
 
 // ---------- Screen layout: minimize & widget visibility ----------
@@ -386,6 +399,7 @@ async function startCam() {
     setupZoomTorch(track);
     if (recording) recCanvas.width = canvas.width, recCanvas.height = canvas.height;
     if (!running) { running = true; loop(); }
+    startPlateLoop();
     if (!model) $("status").textContent = "กำลังโหลดโมเดล…";
   } catch (e) {
     if (deviceId && deviceId === S.camId && !triedSaved) {
@@ -533,6 +547,7 @@ function drawGuide() {
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawGuide();
+  if (S.plateOn) drawPlates();
   const lw = Math.max(2, canvas.width / 320), fs = Math.max(14, canvas.width / 50), flip = facing === "user";
   tracks.forEach(t => {
     if (t.missed > 0 && t.id !== lockedId) return;
@@ -575,7 +590,6 @@ async function loop() {
     let dets = await model.detect(video, 20, S.conf / 100);
     if (S.filter) dets = dets.filter(d => d.class === S.filter);
     updateTracks(dets); draw();
-    if (S.plateOn) schedulePlateScan();
     const now = performance.now(); fps = fps * 0.9 + (1000 / (now - lastTime)) * 0.1; lastTime = now;
     if (++tick % 5 === 0) {
       renderList();
@@ -889,16 +903,23 @@ function cropLine(bin, seg, y0, y1) {
 }
 
 // Read a plate inside (sx,sy,sw,sh) of the video frame
-async function readRegion(sx, sy, sw, sh) {
-  const scale = Math.min(1, 640 / sw), cw = Math.max(1, Math.round(sw * scale)), ch = Math.max(1, Math.round(sh * scale));
-  const c1 = document.createElement("canvas"); c1.width = cw; c1.height = ch;
-  const g1 = c1.getContext("2d", { willReadFrequently: true }); g1.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
-  const loc = locatePlate(g1.getImageData(0, 0, cw, ch), cw, ch) || { x: 0, y: 0, w: cw, h: ch * 0.5 };
-  // the strongest text band is usually the registration line: widen it to take in the frame and province line
-  const ex0 = Math.max(0, loc.x - loc.w * 0.12), ex1 = Math.min(cw, loc.x + loc.w * 1.12);
-  const ey0 = Math.max(0, loc.y - loc.h * 0.5), ey1 = Math.min(ch, loc.y + loc.h * 2.0);
-  const px = sx + ex0 / scale, py = sy + ey0 / scale, pw = (ex1 - ex0) / scale, ph = (ey1 - ey0) / scale;
-  const up = Math.min(4, Math.max(1, 120 / (loc.h / scale)));   // registration text ≈ 120 px tall
+async function readRegion(sx, sy, sw, sh, known) {
+  let px, py, pw, ph, up;
+  if (known) {   // the AI detector already found the plate: (sx,sy,sw,sh) is the plate itself
+    px = Math.max(0, sx - sw * 0.06); py = Math.max(0, sy - sh * 0.08);
+    pw = Math.min(video.videoWidth - px, sw * 1.12); ph = Math.min(video.videoHeight - py, sh * 1.16);
+    up = Math.min(4, Math.max(1, 120 / (sh * 0.5)));
+  } else {
+    const scale = Math.min(1, 640 / sw), cw = Math.max(1, Math.round(sw * scale)), ch = Math.max(1, Math.round(sh * scale));
+    const c1 = document.createElement("canvas"); c1.width = cw; c1.height = ch;
+    const g1 = c1.getContext("2d", { willReadFrequently: true }); g1.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+    const loc = locatePlate(g1.getImageData(0, 0, cw, ch), cw, ch) || { x: 0, y: 0, w: cw, h: ch * 0.5 };
+    // the strongest text band is usually the registration line: widen it to take in the frame and province line
+    const ex0 = Math.max(0, loc.x - loc.w * 0.12), ex1 = Math.min(cw, loc.x + loc.w * 1.12);
+    const ey0 = Math.max(0, loc.y - loc.h * 0.5), ey1 = Math.min(ch, loc.y + loc.h * 2.0);
+    px = sx + ex0 / scale; py = sy + ey0 / scale; pw = (ex1 - ex0) / scale; ph = (ey1 - ey0) / scale;
+    up = Math.min(4, Math.max(1, 120 / (loc.h / scale)));   // registration text ≈ 120 px tall
+  }
   const bin = prepForOCR(video, px, py, pw, ph, ph * up);
   const seg = segmentLines(bin);
   let top, bot;
@@ -976,10 +997,20 @@ async function readPlate(t) {
 // Manual scan: aim the plate inside the centre box
 async function scanCenter() {
   if (!stream) return;
-  if (!ocrP) { loadOCR(); return toast("กำลังโหลดตัวอ่านป้าย ลองใหม่อีกครั้งในไม่กี่วินาที", 2500); }
-  if (plateBusy) return toast("กำลังอ่านอยู่…");
   const vw = video.videoWidth, vh = video.videoHeight, gw = vw * 0.44, gh = vh * 0.28;
   const sx = (vw - gw) / 2, sy = (vh - gh) / 2;
+  if (cloudEnabled()) {
+    scanGuide = { x: sx, y: sy, w: gw, h: gh, until: Date.now() + 2500 };
+    toast("🔍 กำลังส่งไปอ่าน…", 1500);
+    await new Promise(r => setTimeout(r, 500));
+    const r = await cloudRead({ x: sx, y: sy, w: gw, h: gh });
+    scanGuide = null;
+    if (r.reg) { logPlate({ plate: { text: r.reg, prov: r.prov }, cls: "manual", id: 0 }); return toast(`🚘 ${r.reg} ${r.prov}`, 3000); }
+    if (r.err) toast("อ่านออนไลน์ไม่ได้: " + r.err + " — ลองอ่านในเครื่องแทน", 3000);
+    else return toast("ไม่พบป้ายในกรอบ — ลองเข้าใกล้ขึ้นหรือถือให้นิ่ง", 3000);
+  }
+  if (!ocrP) { loadOCR(); return toast("กำลังโหลดตัวอ่านป้าย ลองใหม่อีกครั้งในไม่กี่วินาที", 2500); }
+  if (plateBusy) return toast("กำลังอ่านอยู่…");
   scanGuide = { x: sx, y: sy, w: gw, h: gh, until: Date.now() + 4000 };
   toast("🔍 เล็งป้ายให้อยู่ในกรอบ…", 1500);
   plateBusy = true;
@@ -997,6 +1028,201 @@ async function scanCenter() {
   toast(`🚘 ${found.reg} ${found.prov}`, 3000);
 }
 $("scanBtn").onclick = scanCenter;
+
+// =====================================================================
+// Realtime plate pipeline: AI plate detector on every frame (on the phone)
+// → track each plate → read each new plate once (online service, or on-phone OCR)
+// =====================================================================
+const TH_PROV = {10:"กรุงเทพมหานคร",11:"สมุทรปราการ",12:"นนทบุรี",13:"ปทุมธานี",14:"พระนครศรีอยุธยา",15:"อ่างทอง",16:"ลพบุรี",17:"สิงห์บุรี",18:"ชัยนาท",19:"สระบุรี",20:"ชลบุรี",21:"ระยอง",22:"จันทบุรี",23:"ตราด",24:"ฉะเชิงเทรา",25:"ปราจีนบุรี",26:"นครนายก",27:"สระแก้ว",30:"นครราชสีมา",31:"บุรีรัมย์",32:"สุรินทร์",33:"ศรีสะเกษ",34:"อุบลราชธานี",35:"ยโสธร",36:"ชัยภูมิ",37:"อำนาจเจริญ",38:"บึงกาฬ",39:"หนองบัวลำภู",40:"ขอนแก่น",41:"อุดรธานี",42:"เลย",43:"หนองคาย",44:"มหาสารคาม",45:"ร้อยเอ็ด",46:"กาฬสินธุ์",47:"สกลนคร",48:"นครพนม",49:"มุกดาหาร",50:"เชียงใหม่",51:"ลำพูน",52:"ลำปาง",53:"อุตรดิตถ์",54:"แพร่",55:"น่าน",56:"พะเยา",57:"เชียงราย",58:"แม่ฮ่องสอน",60:"นครสวรรค์",61:"อุทัยธานี",62:"กำแพงเพชร",63:"ตาก",64:"สุโขทัย",65:"พิษณุโลก",66:"พิจิตร",67:"เพชรบูรณ์",70:"ราชบุรี",71:"กาญจนบุรี",72:"สุพรรณบุรี",73:"นครปฐม",74:"สมุทรสาคร",75:"สมุทรสงคราม",76:"เพชรบุรี",77:"ประจวบคีรีขันธ์",80:"นครศรีธรรมราช",81:"กระบี่",82:"พังงา",83:"ภูเก็ต",84:"สุราษฎร์ธานี",85:"ระนอง",86:"ชุมพร",90:"สงขลา",91:"สตูล",92:"ตรัง",93:"พัทลุง",94:"ปัตตานี",95:"ยะลา",96:"นราธิวาส"};
+const fmtPlate = p => (p || "").replace(/\s+/g, "").replace(/^(\d?[ก-ฮA-Za-z]{1,3})(\d{1,4})$/, "$1 $2");
+
+// ---------- online reading ----------
+const cloudEnabled = () => S.cloudProv && S.cloudProv !== "off" && !!S.cloudKey;
+let cloudSeq = 0, cloudInFlight = 0, cloudLastErr = "", cloudBlockedUntil = 0;
+const cloudPending = {};
+const monthKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}`; };
+function cloudCount(add) {
+  let c = {}; try { c = JSON.parse(localStorage.getItem("ct-cloud") || "{}"); } catch (e) {}
+  const k = monthKey(); if (add) { c[k] = (c[k] || 0) + add; try { localStorage.setItem("ct-cloud", JSON.stringify(c)); } catch (e) {} }
+  return c[k] || 0;
+}
+function showCloudInfo() {
+  const n = cloudCount(0);
+  if (!cloudEnabled()) { $("cloudInfo").textContent = S.cloudProv === "off" ? "ตอนนี้อ่านในเครื่อง · ถ้าอยากให้เร็วและแม่นขึ้น ให้สมัคร API key ฟรีที่ app.platerecognizer.com แล้วเลือกบริการด้านบน" : "ใส่ API key ก่อนใช้งาน"; return; }
+  $("cloudInfo").textContent = `✅ อ่านออนไลน์ด้วย ${S.cloudProv === "pr" ? "Plate Recognizer" : "iApp"} · เดือนนี้ใช้ไป ${n} ครั้ง` + (S.cloudProv === "pr" ? " (ฟรี 2,500)" : "") + (cloudLastErr ? ` · ล่าสุด: ${cloudLastErr}` : "");
+}
+function cropB64(r, maxW) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const x = Math.max(0, r.x), y = Math.max(0, r.y), w = Math.min(vw - x, r.w), h = Math.min(vh - y, r.h);
+  const sc = Math.min(1, maxW / w), c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
+  c.getContext("2d").drawImage(video, x, y, w, h, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.9).split(",")[1];
+}
+function parseCloud(prov, body, code) {
+  if (code === 401 || code === 403) return { err: "API key ไม่ถูกต้อง", fatal: true };
+  if (code === 429) return { err: "เกินโควตา/ส่งถี่เกินไป", wait: true };
+  let j; try { j = JSON.parse(body); } catch (e) { return { err: code ? `ตอบกลับผิดรูปแบบ (${code})` : "ไม่มีเน็ต" }; }
+  if (j && j.error && !code) return { err: "ไม่มีเน็ต" };
+  if (prov === "pr") {
+    const r = j.results && j.results[0];
+    if (!r) return code >= 400 ? { err: (j.detail || j.error || "ผิดพลาด " + code) } : { none: true };
+    const m = r.region && /th-(\d+)/i.exec(r.region.code || "");
+    return { reg: fmtPlate((r.plate || "").toUpperCase()), prov: m ? (TH_PROV[+m[1]] || "") : "", score: r.score || 0 };
+  }
+  // iApp
+  if (code >= 400 && !j.lp_number) return { err: j.message || "ผิดพลาด " + code };
+  if (!j.lp_number || j.is_missing_plate === "yes") return { none: true };
+  const pv = j.province || "", th = /\(([^)]+)\)/.exec(pv), num = /th-(\d+)/i.exec(pv);
+  return { reg: fmtPlate(j.lp_number), prov: th ? th[1] : (num ? TH_PROV[+num[1]] || "" : ""), score: (j.conf || 0) / 100 };
+}
+window.__plateResult = (id, body, code) => {
+  const p = cloudPending[id]; if (!p) return;
+  clearTimeout(p.timer); delete cloudPending[id]; cloudInFlight--;
+  const r = parseCloud(p.prov, body, code);
+  if (r.err) { cloudLastErr = r.err; if (r.fatal) cloudBlockedUntil = Date.now() + 60000; if (r.wait) cloudBlockedUntil = Date.now() + 5000; }
+  else cloudLastErr = "";
+  showCloudInfo(); p.res(r);
+};
+function cloudRead(rect) {
+  return new Promise(res => {
+    if (Date.now() < cloudBlockedUntil) return res({ err: cloudLastErr || "พักชั่วคราว" });
+    const id = "p" + (++cloudSeq), prov = S.cloudProv, key = S.cloudKey, b64 = cropB64(rect, 1024);
+    cloudInFlight++; cloudCount(1);
+    cloudPending[id] = { res, prov, timer: setTimeout(() => window.__plateResult(id, "", 0), 12000) };
+    if (Bridge && typeof Bridge.cloudPlate === "function") { Bridge.cloudPlate(id, prov, key, b64); return; }
+    // browser version: call the service directly (may be blocked by the service's browser policy)
+    const bin = atob(b64), arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const fd = new FormData(), blob = new Blob([arr], { type: "image/jpeg" });
+    let url, headers;
+    if (prov === "pr") { url = "https://api.platerecognizer.com/v1/plate-reader/"; headers = { Authorization: "Token " + key }; fd.append("upload", blob, "plate.jpg"); fd.append("regions", "th"); }
+    else { url = "https://api.iapp.co.th/license-plate-recognition/file"; headers = { apikey: key }; fd.append("file", blob, "plate.jpg"); }
+    fetch(url, { method: "POST", headers, body: fd }).then(async r => window.__plateResult(id, await r.text(), r.status))
+      .catch(e => window.__plateResult(id, JSON.stringify({ error: String(e) }), 0));
+  });
+}
+
+// ---------- AI plate detector (YOLOv9-tiny, 384 px, ONNX) ----------
+const PIN = 384;
+let ortSess = null, detSrc = "", detMs = 0, plateTracks = [], pNext = 1, pBusy = false, plateLoopOn = false;
+const pCanvas = document.createElement("canvas"); pCanvas.width = pCanvas.height = PIN;
+const pCtx = pCanvas.getContext("2d", { willReadFrequently: true });
+function showDetStatus(extra) { $("detStatus").textContent = `ตัวหาป้าย: ${detSrc || "กำลังโหลด…"}` + (detMs ? ` · ${Math.round(detMs)} ms/ภาพ` : "") + (extra ? " · " + extra : ""); }
+async function loadPlateDetector() {
+  let local = !!LOCAL_MODELS;
+  const CDN = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/";
+  try {
+    if (!window.ort && local) { try { await loadScript(LOCAL_MODELS + "ort/ort.wasm.min.js"); } catch (e) { local = false; } }
+    if (!window.ort) { local = false; await loadScript(CDN + "ort.wasm.min.js"); }
+    ort.env.wasm.numThreads = 1;
+    const tryCreate = async (wasmBase, modelUrl) => { ort.env.wasm.wasmPaths = wasmBase; return ort.InferenceSession.create(modelUrl, { executionProviders: ["wasm"], graphOptimizationLevel: "all" }); };
+    try { ortSess = await tryCreate(local ? LOCAL_MODELS + "ort/" : CDN, local ? LOCAL_MODELS + "plate384.onnx" : "models/plate384.onnx"); }
+    catch (e) { if (!local) throw e; local = false; ortSess = await tryCreate(CDN, "models/plate384.onnx"); }
+    detSrc = local ? "📦 ในแอป" : "🌐 อินเทอร์เน็ต";
+  } catch (e) { detSrc = "❌ โหลดไม่ได้ (" + (e && e.message || e) + ")"; }
+  showDetStatus();
+}
+async function detectPlates() {
+  const vw = video.videoWidth, vh = video.videoHeight, r = Math.min(PIN / vw, PIN / vh);
+  const nw = Math.round(vw * r), nh = Math.round(vh * r), dw = (PIN - nw) / 2, dh = (PIN - nh) / 2;
+  pCtx.fillStyle = "rgb(114,114,114)"; pCtx.fillRect(0, 0, PIN, PIN);
+  pCtx.drawImage(video, Math.round(dw - 0.1), Math.round(dh - 0.1), nw, nh);
+  const d = pCtx.getImageData(0, 0, PIN, PIN).data, N = PIN * PIN, f = new Float32Array(3 * N);
+  for (let i = 0; i < N; i++) { f[i] = d[i * 4] / 255; f[N + i] = d[i * 4 + 1] / 255; f[2 * N + i] = d[i * 4 + 2] / 255; }
+  const out = await ortSess.run({ [ortSess.inputNames[0]]: new ort.Tensor("float32", f, [1, 3, PIN, PIN]) });
+  const o = out[ortSess.outputNames[0]], rows = o.dims[0], a = o.data, res = [];
+  for (let k = 0; k < rows; k++) {
+    const sc = a[k * 7 + 6]; if (sc < 0.25) continue;
+    const x1 = (a[k * 7 + 1] - dw) / r, y1 = (a[k * 7 + 2] - dh) / r, x2 = (a[k * 7 + 3] - dw) / r, y2 = (a[k * 7 + 4] - dh) / r;
+    if (x2 - x1 < 8 || y2 - y1 < 4) continue;
+    res.push({ bbox: [x1, y1, x2 - x1, y2 - y1], score: sc });
+  }
+  return res;
+}
+function updatePlateTracks(dets) {
+  const used = new Set();
+  plateTracks.forEach(t => {
+    let best = -1, bs = 0;
+    dets.forEach((d, i) => { if (used.has(i)) return; const ov = iou(t.box, d.bbox); if (ov > bs && ov > 0.15) { bs = ov; best = i; } });
+    if (best < 0) {   // fast motion: allow a near match by centre distance
+      dets.forEach((d, i) => { if (used.has(i) || best >= 0) return; const [cx, cy] = center(t.box), [dx, dy] = center(d.bbox); if (Math.hypot(cx - dx, cy - dy) < Math.max(t.box[2], d.bbox[2]) * 1.2) best = i; });
+    }
+    if (best >= 0) { const d = dets[best]; used.add(best); t.box = t.box.map((v, k) => v * 0.35 + d.bbox[k] * 0.65); t.score = d.score; t.missed = 0; t.seen++; t.maxW = Math.max(t.maxW, d.bbox[2]); }
+    else t.missed++;
+  });
+  dets.forEach((d, i) => { if (!used.has(i)) plateTracks.push({ id: pNext++, box: d.bbox.slice(), score: d.score, missed: 0, seen: 1, maxW: d.bbox[2], tries: 0, sentW: 0, state: "" }); });
+  plateTracks = plateTracks.filter(t => t.missed < 12);
+}
+function readPlateTrack(t) {
+  const [x, y, w, h] = t.box;
+  t.state = "busy"; t.tries++; t.sentW = w;
+  const done = r => {
+    t.state = "";
+    if (r && r.reg && (r.src === "cloud" || plausible(r.reg))) {
+      const changed = t.text !== r.reg;
+      t.text = r.reg; t.prov = r.prov || t.prov || ""; t.src = r.src;
+      if (changed) logPlate({ plate: { text: t.text, prov: t.prov }, cls: "car", id: t.id });
+    }
+    if (r && r.err) t.cloudErr = true;
+  };
+  if (cloudEnabled() && !t.cloudErr && Date.now() >= cloudBlockedUntil) {
+    // send the plate with some car around it: services read better with context
+    cloudRead({ x: x - w * 0.6, y: y - h * 1.2, w: w * 2.2, h: h * 3.2 }).then(r => done({ ...r, src: "cloud" }));
+  } else {
+    if (!ocrP) { loadOCR(); t.state = ""; t.tries--; return; }
+    if (plateBusy) { t.state = ""; t.tries--; return; }
+    plateBusy = true;
+    readRegion(x, y, w, h, true).then(r => done({ ...r, src: "local" })).catch(() => done(null)).finally(() => { plateBusy = false; });
+  }
+}
+function handlePlateReads() {
+  const minW = video.videoWidth * S.plateW / 100;
+  for (const t of plateTracks) {
+    if (t.missed > 0 || t.seen < 2 || t.state === "busy") continue;
+    const w = t.box[2];
+    if (w < minW) continue;
+    if (t.text && t.src === "cloud") continue;                        // already read online
+    if (t.tries >= (t.text ? 4 : 3)) continue;
+    if (t.tries > 0 && w < t.sentW * 1.25 && !(t.text && t.src === "local")) continue;   // retry only when the plate got closer
+    if (cloudEnabled() && cloudInFlight >= 2) continue;
+    readPlateTrack(t);
+  }
+}
+function drawPlates() {
+  const lw = Math.max(2, canvas.width / 360), fs = Math.max(14, canvas.width / 55), flip = facing === "user";
+  plateTracks.forEach(t => {
+    if (t.missed > 2) return;
+    const [x, y, w, h] = t.box, col = t.text ? "#3ddc97" : "#ffd60a";
+    ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.strokeRect(x, y, w, h);
+    const label = t.text ? `${t.text}${t.prov ? " " + t.prov : ""}` : (t.state === "busy" ? "กำลังอ่าน…" : "ป้าย");
+    ctx.save(); ctx.font = `700 ${fs}px "Noto Sans Thai", sans-serif`;
+    const tw = ctx.measureText(label).width + 12, ly = y + h + 4;
+    if (flip) { ctx.translate(x + w, ly); ctx.scale(-1, 1); } else ctx.translate(x, ly);
+    ctx.fillStyle = col; ctx.fillRect(0, 0, tw, fs + 10); ctx.fillStyle = "#000"; ctx.fillText(label, 6, fs + 2);
+    ctx.restore();
+  });
+}
+let lastPlateHud = 0;
+async function plateLoop() {
+  if (!running) { plateLoopOn = false; return; }
+  if (S.plateOn && ortSess && video.readyState >= 2 && !pBusy) {
+    pBusy = true;
+    try {
+      const t0 = performance.now();
+      updatePlateTracks(await detectPlates());
+      detMs = detMs ? detMs * 0.85 + (performance.now() - t0) * 0.15 : performance.now() - t0;
+      handlePlateReads();
+      if (!S.detectOn || !model) draw();   // COCO loop is not drawing: draw here
+      if (Date.now() - lastPlateHud > 1000) { lastPlateHud = Date.now(); const n = plateTracks.filter(t => t.missed === 0).length; showDetStatus(n ? `เห็นป้าย ${n}` : "ยังไม่เห็นป้าย"); }
+    } catch (e) { showDetStatus("ผิดพลาด: " + (e && e.message || e)); }
+    pBusy = false;
+  }
+  if (!S.plateOn && plateTracks.length) plateTracks = [];
+  setTimeout(plateLoop, S.plateOn ? 15 : 400);
+}
+function startPlateLoop() { if (plateLoopOn) return; plateLoopOn = true; plateLoop(); }
+loadPlateDetector(); showCloudInfo();
+
 
 function logPlate(t) {
   const entry = { time: new Date(), plate: t.plate.text, prov: t.plate.prov, cls: t.cls, id: t.id,

@@ -47,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
         s.setGeolocationEnabled(true);
         final MediaBridge bridge = new MediaBridge(this);
         webView.addJavascriptInterface(bridge, "AndroidBridge");
+        bridge.setWebView(webView);
 
         webView.setWebViewClient(new WebViewClientCompat() {
             @Override
