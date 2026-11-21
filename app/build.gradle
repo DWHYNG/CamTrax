@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Page URL is filled in automatically by GitHub Actions (https://<owner>.github.io/<repo>/)
+def pagesUrl = project.findProperty('pagesUrl') ?: ''
+
+android {
+    namespace 'com.wing.camtrax'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.wing.camtrax'
+        minSdk 29
+        targetSdk 34
+        versionCode 5
+        versionName '1.4'
+        buildConfigField 'String', 'PAGES_URL', "\"${pagesUrl}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // Fixed key so new APKs install over the old one
+    signingConfigs {
+        fixed {
+            storeFile file('release.keystore')
+            storePassword 'objtrack123'
+            keyAlias 'objecttracker'
+            keyPassword 'objtrack123'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.fixed
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.fixed
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

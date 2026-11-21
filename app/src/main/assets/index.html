@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CamTrax</title>
+<style>
+  :root { --bg:#000; --panel:rgba(18,20,24,.94); --line:#2a2f37; --text:#e8eaed; --mute:#8a929c; --accent:#3ddc97; --lock:#ffb020; --rec:#ff3b30; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif; }
+  #app { position:fixed; inset:0; }
+  video, #canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  #canvas { cursor:crosshair; }
+
+  /* top-left status */
+  .hud { position:absolute; top:max(10px, env(safe-area-inset-top)); left:max(10px, env(safe-area-inset-left)); display:flex; gap:6px; flex-wrap:wrap; max-width:60%; pointer-events:none; }
+  .pill { background:rgba(0,0,0,.55); border-radius:999px; padding:5px 11px; font-size:12.5px; white-space:nowrap; }
+  .pill b { color:var(--accent); font-weight:600; }
+  #recPill { display:none; color:#fff; background:var(--rec); font-weight:600; }
+  #recPill.on { display:block; animation:blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity:.55; } }
+
+  /* right control rail */
+  .rail { position:absolute; right:max(12px, env(safe-area-inset-right)); top:0; bottom:0; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:14px; }
+  .rbtn { width:48px; height:48px; border-radius:50%; border:none; background:rgba(0,0,0,.55); color:#fff; font-size:21px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .rbtn:disabled { opacity:.35; }
+  .rbtn.active { background:var(--lock); color:#000; }
+  #recBtn { width:66px; height:66px; background:rgba(0,0,0,.45); border:4px solid #fff; }
+  #recBtn::after { content:""; width:44px; height:44px; border-radius:50%; background:var(--rec); transition:all .2s; }
+  #recBtn.on::after { width:24px; height:24px; border-radius:5px; }
+
+  /* zoom pills bottom center */
+  /* bottom-left dashboard: time, speed, location */
+  #dash { position:absolute; left:max(12px, env(safe-area-inset-left)); bottom:max(12px, env(safe-area-inset-bottom)); background:rgba(0,0,0,.5); border-radius:12px; padding:8px 14px 9px; pointer-events:none; max-width:44%; text-shadow:0 1px 2px rgba(0,0,0,.6); }
+  #dClock { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; opacity:.9; }
+  #dSpeed { font-size:40px; font-weight:700; line-height:1.05; font-variant-numeric:tabular-nums; }
+  #dSpeed small { font-size:15px; font-weight:600; opacity:.8; margin-left:4px; }
+  #dPlace { font-size:13px; line-height:1.35; margin-top:2px; }
+  #dCoords { font-size:11.5px; opacity:.7; font-variant-numeric:tabular-nums; }
+  #video2 { position:absolute; top:max(10px, env(safe-area-inset-top)); right:calc(max(12px, env(safe-area-inset-right)) + 64px); width:22%; max-width:220px; aspect-ratio:4/3; object-fit:cover; border-radius:10px; border:2px solid rgba(255,255,255,.85); display:none; transform:scaleX(-1); background:#111; }
+  .rbtn.off { opacity:.55; }
+  #zoomBar { position:absolute; bottom:max(12px, env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); display:none; gap:6px; background:rgba(0,0,0,.45); padding:5px; border-radius:999px; }
+  #zoomBar button { border:none; background:transparent; color:#fff; font-size:13px; font-weight:600; width:40px; height:32px; border-radius:999px; cursor:pointer; }
+  #zoomBar button.sel { background:rgba(255,255,255,.9); color:#000; }
+
+  /* start overlay */
+  .placeholder { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; color:var(--mute); text-align:center; padding:20px; background:#0e1013; }
+  .bigbtn { font:inherit; font-size:16px; font-weight:600; border:none; border-radius:10px; padding:12px 22px; cursor:pointer; background:var(--accent); color:#06281a; }
+  .bigbtn.alt { background:#20242b; color:var(--text); border:1px solid var(--line); }
+  .err { color:#ff6b6b; font-size:13px; line-height:1.5; max-width:420px; }
+
+  /* settings drawer */
+  #drawer { position:absolute; top:0; bottom:0; right:0; width:min(340px, 88vw); background:var(--panel); border-left:1px solid var(--line); transform:translateX(100%); transition:transform .25s; overflow-y:auto; padding:14px 16px calc(16px + env(safe-area-inset-bottom)); padding-right:max(16px, env(safe-area-inset-right)); z-index:5; }
+  #drawer.open { transform:none; }
+  #drawer h2 { font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--mute); margin:16px 0 8px; font-weight:600; }
+  #drawer h2:first-of-type { margin-top:4px; }
+  .dhead { display:flex; justify-content:space-between; align-items:center; }
+  .dhead b { font-size:16px; }
+  .x { background:none; border:none; color:var(--text); font-size:22px; cursor:pointer; padding:4px 8px; }
+  select, .btn { font:inherit; font-size:14px; border-radius:8px; border:1px solid var(--line); background:#20242b; color:var(--text); padding:8px 10px; cursor:pointer; width:100%; }
+  .btn.on { background:var(--accent); color:#06281a; border-color:var(--accent); font-weight:600; }
+  .row { display:flex; gap:8px; margin-top:8px; align-items:center; }
+  label.small { font-size:13px; color:var(--mute); display:block; margin:10px 0 4px; }
+  .check { display:flex; align-items:center; gap:8px; font-size:14px; margin-top:10px; cursor:pointer; }
+  .check input { width:18px; height:18px; accent-color:var(--accent); }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  ul { list-style:none; font-size:14px; max-height:180px; overflow:auto; }
+  li { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); cursor:pointer; }
+  li.locked { color:var(--lock); font-weight:600; }
+  li span:last-child { color:var(--mute); }
+  .hint { font-size:12.5px; color:var(--mute); line-height:1.5; margin-top:6px; }
+  .meter { height:8px; background:#2a2f37; border-radius:4px; overflow:hidden; margin-top:6px; }
+  .meter div { height:100%; background:var(--accent); width:0; }
+
+  /* minimize / visibility */
+  #app.mini .hide-mini { display:none !important; }
+  #app.no-dash #dash, #app.no-zoom #zoomBar, #app.no-pills .hud .pill:not(#recPill), #app.no-pip #video2 { display:none !important; }
+  #dash { pointer-events:auto; cursor:pointer; }
+  #dash.compact #dClock, #dash.compact #dPlace, #dash.compact #dCoords { display:none; }
+  #dash.compact #dSpeed { font-size:26px; }
+  #app.mini #dash #dClock, #app.mini #dash #dPlace, #app.mini #dash #dCoords { display:none; }
+  #app.mini #dash #dSpeed { font-size:26px; }
+  #miniBtn { font-size:18px; }
+  #camPicker { position:absolute; right:calc(max(12px, env(safe-area-inset-right)) + 60px); top:50%; transform:translateY(-50%); background:rgba(18,20,24,.94); border:1px solid var(--line); border-radius:12px; padding:6px; display:none; flex-direction:column; gap:4px; z-index:6; max-height:80%; overflow-y:auto; min-width:190px; }
+  #camPicker.open { display:flex; }
+  #camPicker button { font:inherit; font-size:14px; text-align:left; border:none; background:transparent; color:var(--text); padding:9px 12px; border-radius:8px; cursor:pointer; white-space:nowrap; }
+  #camPicker button.sel { background:var(--accent); color:#06281a; font-weight:600; }
+  #camPicker small { display:block; font-size:11px; opacity:.65; font-weight:400; }
+
+  /* gallery */
+  #gallery { position:absolute; inset:0; background:#0e1013; z-index:20; display:none; flex-direction:column; }
+  #gallery.open { display:flex; }
+  .ghead { display:flex; align-items:center; gap:8px; padding:10px max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left)); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .ghead b { font-size:16px; margin-right:6px; }
+  .tab { font:inherit; font-size:13px; border:1px solid var(--line); background:#20242b; color:var(--text); border-radius:999px; padding:6px 12px; cursor:pointer; }
+  .tab.sel { background:var(--accent); color:#06281a; border-color:var(--accent); font-weight:600; }
+  .ghead .sp { flex:1; }
+  #gInfo { font-size:12.5px; color:var(--mute); }
+  #gGrid { flex:1; overflow-y:auto; padding:12px max(14px, env(safe-area-inset-right)) 20px max(14px, env(safe-area-inset-left)); display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; align-content:start; }
+  .gitem { position:relative; aspect-ratio:16/9; background:#1b1e24; border-radius:8px; overflow:hidden; cursor:pointer; border:1px solid var(--line); }
+  .gitem img { width:100%; height:100%; object-fit:cover; display:block; }
+  .gbadge { position:absolute; left:6px; bottom:6px; background:rgba(0,0,0,.7); border-radius:6px; padding:2px 6px; font-size:11.5px; }
+  .gtag { position:absolute; right:6px; top:6px; font-size:15px; text-shadow:0 1px 3px #000; }
+  .gempty { grid-column:1/-1; text-align:center; color:var(--mute); padding:40px 10px; line-height:1.6; }
+  #viewer { position:absolute; inset:0; background:#000; z-index:25; display:none; }
+  #viewer.open { display:block; }
+  #vMedia { position:absolute; inset:0 0 54px 0; display:flex; align-items:center; justify-content:center; }
+  #vMedia img, #vMedia video { max-width:100%; max-height:100%; }
+  .vbar { position:absolute; left:0; right:0; bottom:0; height:54px; display:flex; align-items:center; gap:6px; padding:0 max(10px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left)); background:#111; }
+  .vbar button { font:inherit; font-size:14px; border:1px solid var(--line); background:#20242b; color:var(--text); border-radius:8px; padding:7px 11px; cursor:pointer; white-space:nowrap; }
+  .vbar .sp { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; color:var(--mute); padding:0 6px; }
+  .vbar .danger { color:#ff6b6b; }
+  #dialog { position:absolute; inset:0; background:rgba(0,0,0,.6); z-index:30; display:none; align-items:center; justify-content:center; }
+  #dialog.open { display:flex; }
+  #dialog .box { background:#1b1e24; border:1px solid var(--line); border-radius:12px; padding:18px; width:min(340px, 90vw); }
+  #dialog p { margin-bottom:14px; line-height:1.5; white-space:pre-line; word-break:break-all; }
+  #toast { position:absolute; left:50%; top:18%; transform:translateX(-50%); background:rgba(0,0,0,.8); padding:9px 16px; border-radius:10px; font-size:14px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9; }
+  #toast.show { opacity:1; }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .25s; }
+  #rotateHint { display:none; }
+  @media (orientation: portrait) and (max-width: 700px) {
+    #rotateHint { display:block; position:absolute; bottom:90px; left:50%; transform:translateX(-50%); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="video" playsinline muted></video>
+  <video id="video2" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="flash"></div>
+
+  <div class="hud">
+    <div class="pill" id="recPill">● REC <span id="recTime">00:00</span></div>
+    <div class="pill hide-mini" id="status">กำลังโหลดโมเดล…</div>
+    <div class="pill hide-mini" id="storePill" style="display:none"></div>
+    <div class="pill hide-mini" id="platePill" style="display:none"></div>
+  </div>
+
+  <div id="zoomBar" class="hide-mini"></div>
+
+  <div id="dash">
+    <div id="dClock">--:--:--</div>
+    <div id="dSpeed">--<small>km/h</small></div>
+    <div id="dPlace">📍 กำลังหาตำแหน่ง…</div>
+    <div id="dCoords"></div>
+  </div>
+
+  <div class="rail">
+    <button class="rbtn" id="miniBtn" title="ย่อ/ขยายปุ่มบนจอ">⊟</button>
+    <button class="rbtn hide-mini" id="menuBtn" title="ตั้งค่า">⚙️</button>
+    <button class="rbtn hide-mini" id="galleryBtn" title="ดูภาพ/วิดีโอที่บันทึก">🖼️</button>
+    <button class="rbtn" id="flipBtn" title="เลือกกล้อง/เลนส์" disabled>🔄</button>
+    <button class="rbtn" id="recBtn" title="อัดวิดีโอแบบลูป" disabled></button>
+    <button class="rbtn" id="photoBtn" title="ถ่ายภาพ" disabled>📷</button>
+    <button class="rbtn hide-mini" id="scanBtn" title="สแกนป้ายทะเบียนกลางจอ" disabled>🔍</button>
+    <button class="rbtn hide-mini" id="micBtn" title="เปิด/ปิดอัดเสียง">🎤</button>
+    <button class="rbtn hide-mini" id="keepBtn" title="ล็อกคลิปนี้ไม่ให้ถูกลบ" disabled>🔒</button>
+  </div>
+
+  <div id="camPicker"></div>
+
+  <div class="placeholder" id="placeholder">
+    <div style="font-size:42px">📷</div>
+    <div style="font-size:22px;font-weight:700;color:#e8eaed">CamTrax</div>
+    <div class="row" style="justify-content:center;gap:10px">
+      <button class="bigbtn" id="startBtn">เปิดกล้อง</button>
+      <button class="bigbtn alt" id="carBtn">🚗 โหมดกล้องติดรถ</button>
+    </div>
+    <div class="err" id="err"></div>
+    <div class="pill" id="rotateHint">หมุนจอเป็นแนวนอนเพื่อใช้งาน</div>
+  </div>
+
+  <div id="drawer">
+    <div class="dhead"><b>ตั้งค่า</b><button class="x" id="closeDrawer">✕</button></div>
+
+    <h2>🚗 โหมดกล้องติดรถ / อัดวิดีโอ</h2>
+    <button class="btn" id="carToggle">เปิดโหมดกล้องติดรถ</button>
+    <div class="hint">อัดวนต่อเนื่อง เมื่อพื้นที่เต็มตามที่กำหนดจะลบคลิปเก่าสุดอัตโนมัติ (คลิปที่กด 🔒 จะไม่ถูกลบ) และเปิดจอค้างไว้ตลอด</div>
+    <label class="small">พื้นที่สูงสุดสำหรับคลิปวน</label>
+    <select id="quota">
+      <option value="1">1 GB</option><option value="2">2 GB</option><option value="4">4 GB</option>
+      <option value="8">8 GB</option><option value="16">16 GB</option><option value="32">32 GB</option><option value="64">64 GB</option>
+    </select>
+    <div class="meter"><div id="quotaBar"></div></div>
+    <div class="hint" id="usageText">—</div>
+    <label class="small">ความยาวต่อคลิป</label>
+    <select id="segLen"><option value="1">1 นาที</option><option value="3">3 นาที</option><option value="5">5 นาที</option><option value="10">10 นาที</option></select>
+    <label class="small">ความละเอียดวิดีโอ</label>
+    <select id="res"><option value="720">720p (ประหยัดพื้นที่)</option><option value="1080">1080p (คมชัด)</option></select>
+    <label class="check"><input type="checkbox" id="autoCar"> เปิดแอปแล้วเข้าโหมดกล้องติดรถทันที</label>
+    <label class="check"><input type="checkbox" id="stampOn" checked> ใส่วันที่-เวลาในวิดีโอ/ภาพ</label>
+    <label class="check"><input type="checkbox" id="boxRec" checked> ใส่กรอบตรวจจับในวิดีโอ/ภาพ</label>
+    <label class="check"><input type="checkbox" id="audioOn" checked> 🎤 อัดเสียงไปด้วย</label>
+
+    <h2>🎥 อัด 2 กล้อง (หน้า + หลัง)</h2>
+    <label class="check"><input type="checkbox" id="dualOn"> เปิดกล้องหน้าพร้อมกัน</label>
+    <label class="small">รูปแบบในวิดีโอ</label>
+    <select id="dualLayout"><option value="pip">ภาพซ้อนมุมขวาบน (PiP)</option><option value="side">แบ่งจอ ซ้าย-ขวา</option></select>
+    <div class="hint" id="dualHint">บางรุ่นไม่รองรับการเปิด 2 กล้องพร้อมกัน ถ้าเปิดไม่ได้แอปจะแจ้งให้ทราบ</div>
+
+    <h2>📍 ตำแหน่ง GPS</h2>
+    <label class="check"><input type="checkbox" id="gpsOn" checked> บันทึกเส้นทางตอนอัด (ไฟล์ .gpx คู่กับคลิป)</label>
+    <label class="check"><input type="checkbox" id="gpsStamp" checked> ใส่ความเร็ว/พิกัด/สถานที่ในวิดีโอ/ภาพ</label>
+    <label class="check"><input type="checkbox" id="placeOn" checked> แสดงชื่อถนน/เขต/จังหวัด (ใช้เน็ต)</label>
+    <div class="hint" id="gpsText">—</div>
+
+    <div class="hint" id="modelSrc" style="margin-top:12px">โมเดล AI: —</div>
+
+    <h2>🚘 อ่านป้ายทะเบียน</h2>
+    <label class="check"><input type="checkbox" id="plateOn" checked> อ่านป้ายทะเบียนรถที่ตรวจเจอ</label>
+    <label class="small">อ่านเฉพาะรถที่ใหญ่กว่า <span id="plateMinVal">15</span>% ของจอ (รถที่อยู่ใกล้)</label>
+    <input type="range" id="plateMin" min="5" max="40" value="15">
+    <div class="hint" id="plateStatus">ครั้งแรกต้องต่อเน็ตเพื่อโหลดตัวอ่านภาษาไทย (~3 MB)</div>
+    <div class="hint">💡 อ่านได้ดีขึ้นเมื่อตั้งความละเอียดเป็น 1080p · กด 🔍 แล้วเล็งป้ายให้อยู่ในกรอบกลางจอเพื่อสแกนเอง</div>
+    <label class="check"><input type="checkbox" id="plateDebug"> แสดงภาพที่ใช้อ่านป้าย (ตรวจสอบปัญหา)</label>
+    <div id="plateDbgBox" style="display:none;margin-top:6px">
+      <canvas id="plateDbg" style="width:100%;background:#000;border-radius:6px"></canvas>
+      <div class="hint" id="plateRaw">—</div>
+    </div>
+    <ul id="plateList" style="margin-top:6px"><li style="cursor:default;color:var(--mute)">ยังไม่พบป้าย</li></ul>
+    <div class="row"><button class="btn" id="plateExport">💾 บันทึกรายการป้าย (CSV)</button></div>
+
+    <h2>🖥️ แสดงบนหน้าจอ</h2>
+    <label class="check"><input type="checkbox" id="showDash" checked> แผงเวลา/ความเร็ว/ตำแหน่ง</label>
+    <label class="check"><input type="checkbox" id="dashCompact"> แผงแบบย่อ (แสดงแค่ความเร็ว)</label>
+    <label class="check"><input type="checkbox" id="showZoom" checked> ปุ่มซูม</label>
+    <label class="check"><input type="checkbox" id="showPills" checked> แถบสถานะด้านบน</label>
+    <label class="check"><input type="checkbox" id="showPip" checked> ภาพกล้องที่ 2 (ตอนอัด 2 กล้อง)</label>
+    <div class="hint">ปุ่ม ⊟ บนแถบขวาใช้ย่อปุ่มทั้งหมดในครั้งเดียว และแตะที่แผงความเร็วเพื่อย่อ/ขยายได้ (วิดีโอที่อัดไม่ได้รับผลกระทบ)</div>
+
+    <h2>กล้อง</h2>
+    <label class="small">เลนส์ / กล้อง</label>
+    <select id="camSelect" disabled><option>เปิดกล้องก่อน</option></select>
+    <div id="zoomBox" style="display:none">
+      <label class="small">ซูม: <span id="zoomVal">1.0</span>x</label>
+      <input type="range" id="zoom">
+    </div>
+    <div class="row"><button class="btn" id="torchBtn" style="display:none">🔦 ไฟฉาย</button></div>
+    <div class="row"><button class="btn" id="stopBtn" disabled>ปิดกล้อง</button></div>
+    <div class="hint" id="camHint"></div>
+
+    <h2>การตรวจจับวัตถุ</h2>
+    <label class="check"><input type="checkbox" id="detectOn" checked> เปิดการตรวจจับ (ปิดเพื่อประหยัดแบต)</label>
+    <label class="small">ประเภทวัตถุ</label>
+    <select id="filter"><option value="">ทั้งหมด (80 ประเภท)</option></select>
+    <label class="small">ความมั่นใจขั้นต่ำ: <span id="confVal">50</span>%</label>
+    <input type="range" id="conf" min="20" max="90" value="50">
+    <h2>วัตถุที่เห็นอยู่ <span id="count"></span></h2>
+    <ul id="list"><li style="cursor:default;color:var(--mute)">—</li></ul>
+    <div class="hint">แตะกรอบวัตถุบนจอเพื่อล็อกติดตาม แตะอีกครั้งเพื่อปลด</div>
+  </div>
+
+  <div id="gallery">
+    <div class="ghead">
+      <b>🖼️ ไฟล์ที่บันทึก</b>
+      <button class="tab sel" data-f="all">ทั้งหมด</button>
+      <button class="tab" data-f="v">วิดีโอ</button>
+      <button class="tab" data-f="i">ภาพ</button>
+      <button class="tab" data-f="keep">🔒 ล็อกไว้</button>
+      <span class="sp"></span>
+      <span id="gInfo"></span>
+      <button class="x" id="gClose">✕</button>
+    </div>
+    <div id="gGrid"></div>
+  </div>
+
+  <div id="viewer">
+    <div id="vMedia"></div>
+    <div class="vbar">
+      <button id="vBack">✕ ปิด</button>
+      <button id="vPrev">◀</button>
+      <button id="vNext">▶</button>
+      <span class="sp" id="vName"></span>
+      <button id="vKeep">🔒 ล็อก</button>
+      <button id="vShare">📤 แชร์</button>
+      <button id="vOpen">↗ เปิดด้วยแอปอื่น</button>
+      <button id="vDel" class="danger">🗑 ลบ</button>
+    </div>
+  </div>
+
+  <div id="dialog"><div class="box"><p id="dlgText"></p><div class="row"><button class="btn" id="dlgNo">ยกเลิก</button><button class="btn on" id="dlgYes">ตกลง</button></div></div></div>
+
+  <div id="toast"></div>
+</div>
+
+<script>
+const CLASSES = ["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"];
+
+const $ = id => document.getElementById(id);
+const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+const Bridge = window.AndroidBridge || null;   // present only inside the Android app
+let model = null, stream = null, facing = "environment", running = false, deviceId = null, torchOn = false, triedSaved = false;
+let tracks = [], nextId = 1, lockedId = null, lastTime = performance.now(), fps = 0;
+
+// ---------- Settings (remembered on this device) ----------
+const DEF = { quota: "4", segLen: "3", res: "720", autoCar: false, stampOn: true, boxRec: true, detectOn: true, conf: "50", filter: "", gpsOn: true, gpsStamp: true, plateOn: true, plateMin: "10", plateDebug: false, audioOn: true, dualOn: false, dualLayout: "pip", placeOn: true, showDash: true, dashCompact: false, showZoom: true, showPills: true, showPip: true, mini: false };
+let S = { ...DEF };
+try { S = { ...DEF, ...JSON.parse(localStorage.getItem("ot-settings") || "{}") }; } catch (e) {}
+const saveS = () => { try { localStorage.setItem("ot-settings", JSON.stringify(S)); } catch (e) {} };
+
+CLASSES.slice().sort().forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; $("filter").appendChild(o); });
+["quota", "segLen", "res", "filter", "conf", "dualLayout"].forEach(k => { $(k).value = S[k]; $(k).addEventListener("change", e => { S[k] = e.target.value; saveS(); if (k === "quota") refreshUsage(); }); });
+$("plateMin").value = S.plateMin; $("plateMinVal").textContent = S.plateMin;
+$("plateMin").oninput = e => { S.plateMin = e.target.value; $("plateMinVal").textContent = e.target.value; saveS(); };
+["autoCar", "stampOn", "boxRec", "detectOn", "gpsOn", "gpsStamp", "plateOn", "audioOn", "dualOn", "placeOn", "showDash", "dashCompact", "showZoom", "showPills", "showPip", "plateDebug"].forEach(k => { $(k).checked = S[k]; $(k).addEventListener("change", e => { S[k] = e.target.checked; saveS(); applyView(); }); });
+
+// ---------- Screen layout: minimize & widget visibility ----------
+function applyView() {
+  const app = $("app");
+  app.classList.toggle("mini", S.mini);
+  app.classList.toggle("no-dash", !S.showDash);
+  app.classList.toggle("no-zoom", !S.showZoom);
+  app.classList.toggle("no-pills", !S.showPills);
+  app.classList.toggle("no-pip", !S.showPip);
+  $("dash").classList.toggle("compact", S.dashCompact);
+  $("miniBtn").textContent = S.mini ? "⊞" : "⊟";
+  $("dashCompact").checked = S.dashCompact;
+  $("plateDbgBox").style.display = S.plateDebug ? "block" : "none";
+}
+$("miniBtn").onclick = () => { S.mini = !S.mini; saveS(); applyView(); if (S.mini) $("drawer").classList.remove("open"); };
+$("dash").onclick = () => { S.dashCompact = !S.dashCompact; saveS(); applyView(); };
+applyView();
+$("confVal").textContent = S.conf;
+$("conf").oninput = e => { $("confVal").textContent = e.target.value; S.conf = e.target.value; saveS(); };
+$("res").addEventListener("change", () => { if (stream && !recording) startCam(); });
+
+const colorFor = id => `hsl(${(id * 67) % 360} 85% 60%)`;
+function toast(msg, ms = 1800) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms); }
+const fmtBytes = b => b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(0) + " MB";
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+const stampText = () => new Date().toLocaleString("th-TH", { hour12: false });
+
+$("menuBtn").onclick = () => $("drawer").classList.toggle("open");
+$("closeDrawer").onclick = () => $("drawer").classList.remove("open");
+
+// ---------- Model ----------
+// AI models are bundled in the Android app (v1.4+) and served at this address; otherwise they come from the internet
+const LOCAL_MODELS = (Bridge && typeof Bridge.hasModels === "function" && Bridge.hasModels()) ? "https://appassets.androidplatform.net/camtrax/models/" : null;
+const src = { det: "", ocr: "" };
+function loadScript(url) { return new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = url; sc.onload = res; sc.onerror = () => { sc.remove(); rej(new Error("load " + url)); }; document.head.appendChild(sc); }); }
+function showModelSrc() { $("modelSrc").textContent = `โมเดล AI: ตรวจจับวัตถุ ${src.det || "—"} · อ่านป้าย ${src.ocr || "—"}`; }
+async function loadDetector() {
+  let local = !!LOCAL_MODELS;
+  try {
+    if (!window.cocoSsd && local) {
+      try { await loadScript(LOCAL_MODELS + "tf.min.js"); await loadScript(LOCAL_MODELS + "coco-ssd.min.js"); } catch (e) { local = false; }
+    }
+    if (!window.cocoSsd) {
+      local = false;
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js");
+      await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
+    }
+    try { model = await cocoSsd.load(local ? { base: "lite_mobilenet_v2", modelUrl: LOCAL_MODELS + "coco/model.json" } : { base: "lite_mobilenet_v2" }); }
+    catch (e) { if (!local) throw e; local = false; model = await cocoSsd.load({ base: "lite_mobilenet_v2" }); }
+    src.det = local ? "📦 ในแอป" : "🌐 อินเทอร์เน็ต"; showModelSrc();
+    $("status").innerHTML = stream ? "<b>กำลังติดตาม</b>" : "<b>พร้อม</b>";
+  } catch (e) { $("status").textContent = "โหลดโมเดลไม่สำเร็จ (ต้องต่อเน็ต)"; src.det = "❌ โหลดไม่ได้"; showModelSrc(); }
+}
+loadDetector();
+
+// ---------- Camera ----------
+async function startCam() {
+  $("err").textContent = "";
+  try {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stopSecond();
+    const hi = S.res === "1080";
+    const v = { width: { ideal: hi ? 1920 : 1280 }, height: { ideal: hi ? 1080 : 720 } };
+    if (deviceId) v.deviceId = { exact: deviceId }; else v.facingMode = facing;
+    stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    $("placeholder").style.display = "none";
+    ["flipBtn", "stopBtn", "recBtn", "photoBtn", "scanBtn"].forEach(id => $(id).disabled = false);
+    const track = stream.getVideoTracks()[0], st = track.getSettings();
+    if (st.facingMode) facing = st.facingMode === "user" ? "user" : "environment";
+    else if (/front/i.test(track.label)) facing = "user";
+    deviceId = st.deviceId || deviceId;
+    S.camId = deviceId; S.camLabel = track.label || ""; S.facing = facing; saveS();
+    video.style.transform = canvas.style.transform = facing === "user" ? "scaleX(-1)" : "";
+    startGPS();
+    if (S.dualOn) startSecond();
+    await listCameras();
+    setupZoomTorch(track);
+    if (recording) recCanvas.width = canvas.width, recCanvas.height = canvas.height;
+    if (!running) { running = true; loop(); }
+    if (!model) $("status").textContent = "กำลังโหลดโมเดล…";
+  } catch (e) {
+    if (deviceId && deviceId === S.camId && !triedSaved) {
+      // saved camera id can change after an update: find it again by name, else use the saved side
+      triedSaved = true;
+      try {
+        const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+        const same = S.camLabel && cams.find(c => c.label === S.camLabel);
+        deviceId = same ? same.deviceId : null;
+      } catch (_) { deviceId = null; }
+      return startCam();
+    }
+    if (deviceId && (e.name === "OverconstrainedError" || e.name === "NotReadableError")) {
+      $("err").textContent = "กล้องตัวนี้เปิดไม่ได้ ลองเลือกตัวอื่น"; deviceId = null; toast("กล้องตัวนี้เปิดไม่ได้");
+    } else $("err").textContent = "เปิดกล้องไม่ได้: " + e.message + " — ตรวจสอบว่าอนุญาตกล้องแล้ว";
+  }
+}
+function stopCam() {
+  if (recording) stopRecording();
+  running = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; tracks = []; lockedId = null;
+  stopSecond(); stopGPS();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  $("placeholder").style.display = "flex";
+  ["flipBtn", "stopBtn", "recBtn", "photoBtn", "keepBtn", "scanBtn"].forEach(id => $(id).disabled = true);
+  $("camSelect").disabled = true; $("zoomBox").style.display = "none"; $("zoomBar").style.display = "none"; $("torchBtn").style.display = "none";
+  $("drawer").classList.remove("open");
+  renderList();
+}
+// remember the last camera the user picked
+deviceId = S.camId || null; facing = S.facing || "environment";
+$("startBtn").onclick = startCam;
+$("stopBtn").onclick = stopCam;
+// 🔄 on the main screen: pick any camera / lens
+async function openCamPicker() {
+  if (recording) return toast("หยุดอัดก่อนสลับกล้อง");
+  const pk = $("camPicker");
+  if (pk.classList.contains("open")) return pk.classList.remove("open");
+  let cams = [];
+  try { cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput"); } catch (e) {}
+  if (cams.length < 2) { facing = facing === "environment" ? "user" : "environment"; deviceId = null; return startCam(); }
+  let back = 0, front = 0;
+  pk.innerHTML = cams.map(c => {
+    const isFront = /front|user|หน้า/i.test(c.label);
+    const name = isFront ? `🤳 กล้องหน้า ${++front}` : `📷 กล้องหลัง ${++back}`;
+    const raw = c.label ? c.label.replace(/camera2?\s*/i, "#") : "";
+    return `<button data-id="${c.deviceId}" class="${c.deviceId === deviceId ? "sel" : ""}">${name}${raw ? `<small>${raw}</small>` : ""}</button>`;
+  }).join("");
+  pk.classList.add("open");
+}
+$("flipBtn").onclick = e => { e.stopPropagation(); openCamPicker(); };
+$("camPicker").onclick = e => {
+  const b = e.target.closest("button[data-id]"); if (!b) return;
+  $("camPicker").classList.remove("open");
+  if (b.dataset.id === deviceId) return;
+  deviceId = b.dataset.id; startCam();
+};
+document.addEventListener("click", e => { if (!e.target.closest("#camPicker") && !e.target.closest("#flipBtn")) $("camPicker").classList.remove("open"); });
+
+async function listCameras() {
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  let back = 0, front = 0;
+  $("camSelect").innerHTML = cams.map(c => {
+    const isFront = /front|user|หน้า/i.test(c.label);
+    const name = isFront ? `กล้องหน้า ${++front}` : `กล้องหลัง ${++back}`;
+    const raw = c.label ? ` (${c.label.replace(/camera2?\s*/i, "#")})` : "";
+    return `<option value="${c.deviceId}" ${c.deviceId === deviceId ? "selected" : ""}>${name}${raw}</option>`;
+  }).join("");
+  $("camSelect").disabled = cams.length < 2;
+  $("camHint").textContent = cams.length > 1
+    ? `พบกล้อง ${cams.length} ตัว — ลองสลับดูว่าตัวไหนเป็นเลนส์มุมกว้าง บางรุ่นใช้ซูม 0.5x แทน`
+    : "เครื่องนี้เปิดให้ใช้กล้องตัวเดียว ลองใช้ซูม (ต่ำกว่า 1x = มุมกว้าง)";
+}
+$("camSelect").onchange = e => { if (recording) return toast("หยุดอัดก่อนเปลี่ยนกล้อง"); deviceId = e.target.value; startCam(); };
+
+function setupZoomTorch(track) {
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const z = caps.zoom;
+  if (z && z.max > z.min) {
+    let cur = track.getSettings().zoom || z.min;
+    if (S.zoom && S.zoomCam === deviceId && S.zoom >= z.min && S.zoom <= z.max) { cur = S.zoom; track.applyConstraints({ advanced: [{ zoom: cur }] }).catch(() => {}); }
+    Object.assign($("zoom"), { min: z.min, max: z.max, step: z.step || 0.1, value: cur });
+    $("zoomVal").textContent = (+cur).toFixed(1);
+    let presets = [0.5, 0.6, 1, 2, 3, 5, 10].filter(p => p >= z.min - 0.01 && p <= z.max + 0.01);
+    if (z.min < 1 && !presets.some(p => Math.abs(p - z.min) < 0.05)) presets.unshift(+z.min.toFixed(1));
+    presets = presets.slice(0, 5);
+    $("zoomBar").innerHTML = presets.map(p => `<button data-z="${p}">${p}x</button>`).join("");
+    $("zoomBar").style.display = presets.length > 1 ? "flex" : "none";
+    markZoom(cur);
+    $("zoomBox").style.display = "block";
+  } else { $("zoomBox").style.display = "none"; $("zoomBar").style.display = "none"; }
+  torchOn = false;
+  $("torchBtn").style.display = caps.torch ? "block" : "none";
+  $("torchBtn").textContent = "🔦 ไฟฉาย";
+}
+function markZoom(v) { [...$("zoomBar").children].forEach(b => b.classList.toggle("sel", Math.abs(b.dataset.z - v) < 0.05)); }
+async function setZoom(v) {
+  const track = stream && stream.getVideoTracks()[0]; if (!track) return;
+  try { await track.applyConstraints({ advanced: [{ zoom: +v }] }); $("zoom").value = v; $("zoomVal").textContent = (+v).toFixed(1); markZoom(+v); S.zoom = +v; S.zoomCam = deviceId; saveS(); } catch (e) {}
+}
+$("zoom").oninput = e => setZoom(e.target.value);
+$("zoomBar").onclick = e => { const b = e.target.closest("button[data-z]"); if (b) setZoom(b.dataset.z); };
+$("torchBtn").onclick = async () => {
+  const track = stream && stream.getVideoTracks()[0]; if (!track) return;
+  torchOn = !torchOn;
+  try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); $("torchBtn").textContent = torchOn ? "🔦 ปิดไฟ" : "🔦 ไฟฉาย"; } catch (e) { torchOn = false; }
+};
+
+// ---------- Tracking ----------
+function iou(a, b) {
+  const x1 = Math.max(a[0], b[0]), y1 = Math.max(a[1], b[1]);
+  const x2 = Math.min(a[0] + a[2], b[0] + b[2]), y2 = Math.min(a[1] + a[3], b[1] + b[3]);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  return inter / (a[2] * a[3] + b[2] * b[3] - inter || 1);
+}
+const center = b => [b[0] + b[2] / 2, b[1] + b[3] / 2];
+function updateTracks(dets) {
+  const used = new Set(), diag = Math.hypot(canvas.width, canvas.height);
+  tracks.forEach(t => {
+    let best = -1, bestScore = 0;
+    dets.forEach((d, i) => {
+      if (used.has(i) || d.class !== t.cls) return;
+      const ov = iou(t.box, d.bbox), [cx, cy] = center(t.box), [dx, dy] = center(d.bbox);
+      const near = 1 - Math.min(1, Math.hypot(cx - dx, cy - dy) / (diag * 0.25));
+      const s = ov * 0.7 + near * 0.3;
+      if (s > bestScore && (ov > 0.1 || near > 0.6)) { bestScore = s; best = i; }
+    });
+    if (best >= 0) {
+      const d = dets[best]; used.add(best);
+      t.box = t.box.map((v, k) => v * 0.4 + d.bbox[k] * 0.6);
+      t.score = d.score; t.missed = 0;
+      t.trail.push(center(t.box)); if (t.trail.length > 60) t.trail.shift();
+    } else t.missed++;
+  });
+  dets.forEach((d, i) => { if (!used.has(i)) tracks.push({ id: nextId++, cls: d.class, box: d.bbox.slice(), score: d.score, missed: 0, trail: [center(d.bbox)] }); });
+  tracks = tracks.filter(t => t.missed < (t.id === lockedId ? 30 : 8));
+  if (lockedId && !tracks.some(t => t.id === lockedId)) lockedId = null;
+}
+function drawGuide() {
+  if (!scanGuide || Date.now() > scanGuide.until) return;
+  const g = scanGuide; ctx.save(); ctx.setLineDash([14, 10]); ctx.lineWidth = Math.max(3, canvas.width / 300);
+  ctx.strokeStyle = "#ffb020"; ctx.strokeRect(g.x, g.y, g.w, g.h); ctx.restore();
+}
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGuide();
+  const lw = Math.max(2, canvas.width / 320), fs = Math.max(14, canvas.width / 50), flip = facing === "user";
+  tracks.forEach(t => {
+    if (t.missed > 0 && t.id !== lockedId) return;
+    const locked = t.id === lockedId, col = locked ? "#ffb020" : colorFor(t.id), [x, y, w, h] = t.box;
+    ctx.globalAlpha = lockedId && !locked ? 0.3 : 1;
+    ctx.strokeStyle = col; ctx.lineWidth = locked ? lw * 2 : lw; ctx.strokeRect(x, y, w, h);
+    if (locked && t.trail.length > 1) {
+      ctx.beginPath(); ctx.moveTo(...t.trail[0]); t.trail.forEach(p => ctx.lineTo(...p)); ctx.lineWidth = lw * 1.5; ctx.stroke();
+      const [cx, cy] = center(t.box); ctx.beginPath(); ctx.arc(cx, cy, lw * 3, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    }
+    const label = `#${t.id} ${t.cls}` + (t.plate ? ` · ${t.plate.text}${t.plate.prov ? " " + t.plate.prov : ""}` : ` ${Math.round(t.score * 100)}%`);
+    ctx.save(); ctx.font = `600 ${fs}px sans-serif`;
+    const tw = ctx.measureText(label).width + 10, ly = Math.max(0, y - fs - 8);
+    if (flip) { ctx.translate(x + w, ly); ctx.scale(-1, 1); } else ctx.translate(x, ly);
+    ctx.fillStyle = col; ctx.fillRect(0, 0, tw, fs + 8); ctx.fillStyle = "#000"; ctx.fillText(label, 5, fs + 1);
+    ctx.restore(); ctx.globalAlpha = 1;
+  });
+}
+function renderList() {
+  const vis = tracks.filter(t => t.missed === 0 || t.id === lockedId);
+  $("count").textContent = vis.length ? `(${vis.length})` : "";
+  $("list").innerHTML = vis.length ? vis.map(t => `<li data-id="${t.id}" class="${t.id === lockedId ? "locked" : ""}"><span>${t.id === lockedId ? "🎯 " : ""}#${t.id} ${t.cls}</span><span>${Math.round(t.score * 100)}%</span></li>`).join("") : `<li style="cursor:default;color:var(--mute)">—</li>`;
+}
+$("list").onclick = e => { const li = e.target.closest("li[data-id]"); if (li) toggleLock(+li.dataset.id); };
+function toggleLock(id) { lockedId = lockedId === id ? null : id; renderList(); }
+canvas.addEventListener("click", e => {
+  const r = canvas.getBoundingClientRect();
+  const scale = Math.min(r.width / canvas.width, r.height / canvas.height);   // object-fit: contain
+  const offX = (r.width - canvas.width * scale) / 2, offY = (r.height - canvas.height * scale) / 2;
+  let px = (e.clientX - r.left - offX) / scale, py = (e.clientY - r.top - offY) / scale;
+  if (facing === "user") px = canvas.width - px;
+  const hit = tracks.filter(t => { const [x, y, w, h] = t.box; return px >= x && px <= x + w && py >= y && py <= y + h; }).sort((a, b) => a.box[2] * a.box[3] - b.box[2] * b.box[3])[0];
+  if (hit) toggleLock(hit.id); else if (lockedId) toggleLock(lockedId);
+});
+
+let tick = 0;
+async function loop() {
+  if (!running) return;
+  if (video.readyState >= 2 && model && S.detectOn) {
+    let dets = await model.detect(video, 20, S.conf / 100);
+    if (S.filter) dets = dets.filter(d => d.class === S.filter);
+    updateTracks(dets); draw();
+    if (S.plateOn) schedulePlateScan();
+    const now = performance.now(); fps = fps * 0.9 + (1000 / (now - lastTime)) * 0.1; lastTime = now;
+    if (++tick % 5 === 0) {
+      renderList();
+      const locked = tracks.find(t => t.id === lockedId);
+      $("status").innerHTML = `<b>ติดตาม</b> ${fps.toFixed(0)} fps` + (locked ? ` · 🎯 #${locked.id} ${locked.cls}` : "");
+    }
+    requestAnimationFrame(loop);
+  } else {
+    if (!S.detectOn && tracks.length) { tracks = []; lockedId = null; ctx.clearRect(0, 0, canvas.width, canvas.height); renderList(); }
+    if (model && !S.detectOn) $("status").textContent = "ปิดการตรวจจับ";
+    setTimeout(loop, 250);
+  }
+}
+
+// ---------- Compose a frame (camera + boxes + time stamp) ----------
+// draw src into (dx,dy,dw,dh) cropping to fill (like object-fit: cover)
+function drawCover(g, src, sw, sh, dx, dy, dw, dh, mirror) {
+  const r = Math.max(dw / sw, dh / sh), cw = dw / r, ch = dh / r;
+  const sx = (sw - cw) / 2, sy = (sh - ch) / 2;
+  if (mirror) { g.save(); g.translate(dx + dw, dy); g.scale(-1, 1); g.drawImage(src, sx, sy, cw, ch, 0, 0, dw, dh); g.restore(); }
+  else g.drawImage(src, sx, sy, cw, ch, dx, dy, dw, dh);
+}
+function composeTo(c) {
+  const g = c.getContext("2d"), W = c.width, H = c.height, vw = video.videoWidth, vh = video.videoHeight;
+  const dual = stream2 && video2.readyState >= 2;
+  if (dual && S.dualLayout === "side") {
+    const mw = Math.round(W * 0.62);
+    g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+    drawCover(g, video, vw, vh, 0, 0, mw, H);
+    if (S.boxRec && S.detectOn) drawCover(g, canvas, vw, vh, 0, 0, mw, H);
+    drawCover(g, video2, video2.videoWidth, video2.videoHeight, mw + 4, 0, W - mw - 4, H, true);
+  } else {
+    g.drawImage(video, 0, 0, W, H);
+    if (S.boxRec && S.detectOn) g.drawImage(canvas, 0, 0, W, H);
+    if (dual) {
+      const pw = Math.round(W * 0.28), ph = Math.round(pw * 3 / 4), px = W - pw - 14, py = 14;
+      drawCover(g, video2, video2.videoWidth, video2.videoHeight, px, py, pw, ph, true);
+      g.strokeStyle = "#fff"; g.lineWidth = 3; g.strokeRect(px, py, pw, ph);
+    }
+  }
+  const lines = [];
+  if (S.stampOn) lines.push(stampText());
+  if (S.gpsOn && S.gpsStamp && gpsLast) lines.push(gpsLine());
+  if (S.gpsOn && S.gpsStamp && S.placeOn && placeName) lines.push(placeName);
+  if (lines.length) {
+    const fs = Math.round(c.width / 48), lh = fs + 8;
+    g.font = `600 ${fs}px "Noto Sans Thai", sans-serif`;
+    const w = Math.max(...lines.map(l => g.measureText(l).width));
+    const top = c.height - lines.length * lh - 14;
+    g.fillStyle = "rgba(0,0,0,.5)"; g.fillRect(8, top, w + 16, lines.length * lh + 6);
+    g.fillStyle = "#fff"; lines.forEach((l, i) => g.fillText(l, 16, top + (i + 1) * lh - 4));
+  }
+}
+
+// ---------- GPS ----------
+let gpsWatch = null, gpsLast = null, gpsPrev = null, calcSpeed = null, placeName = "", placeAt = null, placeBusy = false;
+function distM(a, b) {   // haversine, metres
+  const R = 6371000, toR = x => x * Math.PI / 180;
+  const dLat = toR(b.latitude - a.latitude), dLon = toR(b.longitude - a.longitude);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a.latitude)) * Math.cos(toR(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const kmh = p => p.coords.speed != null && p.coords.speed >= 0 ? Math.round(p.coords.speed * 3.6) : (calcSpeed != null ? Math.round(calcSpeed * 3.6) : null);
+async function updatePlace(p) {
+  if (!S.placeOn || placeBusy) return;
+  const c = p.coords, now = Date.now();
+  if (placeAt && (now - placeAt.t < 30000 || distM(placeAt, c) < 150)) return;
+  placeBusy = true;
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=th&lat=${c.latitude}&lon=${c.longitude}`);
+    const j = await r.json(), a = j.address || {};
+    const parts = [a.road, a.suburb || a.city_district || a.district || a.town || a.village, a.city || a.state || a.province].filter(Boolean);
+    placeName = [...new Set(parts)].join(", ");
+    placeAt = { latitude: c.latitude, longitude: c.longitude, t: now };
+    $("dPlace").textContent = "📍 " + (placeName || "ไม่ทราบชื่อสถานที่");
+  } catch (e) { } finally { placeBusy = false; }
+}
+function updateDash() {
+  $("dClock").textContent = new Date().toLocaleTimeString("th-TH", { hour12: false }) + "  " + new Date().toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+  if (!S.gpsOn) { $("dSpeed").innerHTML = "--<small>km/h</small>"; $("dPlace").textContent = "📍 ปิด GPS อยู่"; $("dCoords").textContent = ""; return; }
+  if (gpsLast && Date.now() - gpsLast.timestamp > 15000) $("dSpeed").innerHTML = "--<small>km/h</small>";
+}
+setInterval(updateDash, 500); updateDash();
+const gpsLine = () => { const p = gpsLast, v = kmh(p); return `${v != null ? v + " km/h  " : ""}${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)}`; };
+function startGPS() {
+  if (gpsWatch != null || !S.gpsOn || !navigator.geolocation) return;
+  if (!placeName) $("dPlace").textContent = "📍 กำลังหาสัญญาณ GPS…";
+  gpsWatch = navigator.geolocation.watchPosition(p => {
+    if (gpsLast) {   // fallback speed from distance / time when the phone gives none
+      const dt = (p.timestamp - gpsLast.timestamp) / 1000;
+      if (dt > 0.5) { const d = distM(gpsLast.coords, p.coords); calcSpeed = d < p.coords.accuracy ? 0 : d / dt; }
+    }
+    gpsLast = p;
+    const v = kmh(p);
+    $("dSpeed").innerHTML = `${v != null ? v : "--"}<small>km/h</small>`;
+    $("dCoords").textContent = `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)}  ±${Math.round(p.coords.accuracy)}m`;
+    if (S.placeOn) updatePlace(p); else $("dPlace").textContent = "📍 ได้สัญญาณ GPS";
+    $("gpsText").textContent = `ล่าสุด: ${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} (±${Math.round(p.coords.accuracy)} m)`;
+    if (seg && seg.track) {
+      const last = seg.track[seg.track.length - 1];
+      if (!last || p.timestamp - last.t >= 1000) seg.track.push({ lat: p.coords.latitude, lon: p.coords.longitude, ele: p.coords.altitude, spd: p.coords.speed, t: p.timestamp });
+    }
+  }, err => {
+    $("dPlace").textContent = "📍 ไม่มีสัญญาณ GPS";
+    $("gpsText").textContent = err.code === 1 ? "ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง — เปิดสิทธิ์ตำแหน่งให้แอปในตั้งค่ามือถือ" : "ยังหาตำแหน่งไม่ได้: " + err.message;
+  }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+}
+function stopGPS() { if (gpsWatch != null) navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; }
+$("gpsOn").addEventListener("change", () => { if (S.gpsOn && stream) startGPS(); if (!S.gpsOn) stopGPS(); updateDash(); });
+$("placeOn").addEventListener("change", () => { if (!S.placeOn) { placeName = ""; placeAt = null; } else if (gpsLast) updatePlace(gpsLast); });
+
+// ---------- Second camera (front + back at the same time) ----------
+const video2 = $("video2");
+let stream2 = null;
+async function startSecond() {
+  if (stream2 || !stream) return;
+  const want = facing === "user" ? "environment" : "user";
+  try {
+    stream2 = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: want }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    video2.srcObject = stream2; await video2.play();
+    video2.style.transform = want === "user" ? "scaleX(-1)" : "";
+    video2.style.display = "block";
+    $("dualHint").textContent = "เปิด 2 กล้องแล้ว";
+  } catch (e) {
+    stream2 = null; video2.style.display = "none";
+    S.dualOn = false; $("dualOn").checked = false; saveS();
+    $("dualHint").textContent = "มือถือรุ่นนี้เปิด 2 กล้องพร้อมกันไม่ได้ (" + (e.name || "error") + ")";
+    toast("มือถือรุ่นนี้ไม่รองรับการเปิด 2 กล้องพร้อมกัน", 3500);
+  }
+}
+function stopSecond() { if (stream2) stream2.getTracks().forEach(t => t.stop()); stream2 = null; video2.srcObject = null; video2.style.display = "none"; }
+$("dualOn").addEventListener("change", () => { if (S.dualOn) startSecond(); else stopSecond(); });
+
+function buildGPX(track, name) {
+  const pts = track.map(p => `<trkpt lat="${p.lat}" lon="${p.lon}">${p.ele != null ? `<ele>${p.ele.toFixed(1)}</ele>` : ""}<time>${new Date(p.t).toISOString()}</time>${p.spd != null ? `<extensions><speed>${p.spd.toFixed(2)}</speed></extensions>` : ""}</trkpt>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="CamTrax" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${name}</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>\n`;
+}
+function saveText(name, mime, text) {
+  if (Bridge) return Bridge.saveText ? Bridge.saveText(name, mime, text) : false;   // older APK has no saveText
+  downloadUrl(URL.createObjectURL(new Blob([text], { type: mime })), name); return true;
+}
+
+// ---------- License plate reading (Thai plates) ----------
+const PROVINCES = ["กรุงเทพมหานคร","กระบี่","กาญจนบุรี","กาฬสินธุ์","กำแพงเพชร","ขอนแก่น","จันทบุรี","ฉะเชิงเทรา","ชลบุรี","ชัยนาท","ชัยภูมิ","ชุมพร","เชียงราย","เชียงใหม่","ตรัง","ตราด","ตาก","นครนายก","นครปฐม","นครพนม","นครราชสีมา","นครศรีธรรมราช","นครสวรรค์","นนทบุรี","นราธิวาส","น่าน","บึงกาฬ","บุรีรัมย์","ปทุมธานี","ประจวบคีรีขันธ์","ปราจีนบุรี","ปัตตานี","พระนครศรีอยุธยา","พะเยา","พังงา","พัทลุง","พิจิตร","พิษณุโลก","เพชรบุรี","เพชรบูรณ์","แพร่","ภูเก็ต","มหาสารคาม","มุกดาหาร","แม่ฮ่องสอน","ยโสธร","ยะลา","ร้อยเอ็ด","ระนอง","ระยอง","ราชบุรี","ลพบุรี","ลำปาง","ลำพูน","เลย","ศรีสะเกษ","สกลนคร","สงขลา","สตูล","สมุทรปราการ","สมุทรสงคราม","สมุทรสาคร","สระแก้ว","สระบุรี","สิงห์บุรี","สุโขทัย","สุพรรณบุรี","สุราษฎร์ธานี","สุรินทร์","หนองคาย","หนองบัวลำภู","อ่างทอง","อำนาจเจริญ","อุดรธานี","อุตรดิตถ์","อุทัยธานี","อุบลราชธานี"];
+const VEHICLES = new Set(["car", "truck", "bus", "motorcycle"]);
+let ocrP = null, ocrV = null, ocrLoading = false, plateBusy = false, plateLog = [], plateTries = 0, plateHintAt = 0, scanGuide = null;
+const PLATE_CHARS = "กขฃคฅฆงจฉชซฌญฎฏฐฑฒณดตถทธนบปผฝพฟภมยรลวศษสหฬอฮ0123456789";
+
+// Two OCR workers: one for the registration line (letters + digits only), one for the province line
+function loadOCR() {
+  if (ocrP || ocrLoading) return;
+  ocrLoading = true; $("plateStatus").textContent = "กำลังโหลดตัวอ่านป้าย…";
+  const make = async opts => {
+    const wp = await Tesseract.createWorker("tha", 1, opts);
+    await wp.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: PLATE_CHARS });
+    const wv = await Tesseract.createWorker("tha", 1, opts);
+    await wv.setParameters({ tessedit_pageseg_mode: "7" });
+    return [wp, wv];
+  };
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+  (async () => {
+    let local = !!LOCAL_MODELS;
+    try {
+      if (!window.Tesseract && local) { try { await loadScript(LOCAL_MODELS + "tesseract.min.js"); } catch (e) { local = false; } }
+      if (!window.Tesseract) { local = false; await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"); }
+      let ws = null;
+      if (local) {
+        try { ws = await withTimeout(make({ workerPath: LOCAL_MODELS + "worker.min.js", corePath: LOCAL_MODELS + "core", langPath: LOCAL_MODELS + "lang" }), 30000); }
+        catch (e) { local = false; }
+      }
+      if (!ws) ws = await make({});
+      [ocrP, ocrV] = ws;
+      src.ocr = local ? "📦 ในแอป" : "🌐 อินเทอร์เน็ต"; showModelSrc();
+      $("plateStatus").textContent = "✅ พร้อมอ่านป้าย";
+    } catch (e) { $("plateStatus").textContent = "❌ โหลดตัวอ่านป้ายไม่สำเร็จ (ต้องต่อเน็ตครั้งแรก): " + (e && e.message || e); src.ocr = "❌ โหลดไม่ได้"; showModelSrc(); }
+    ocrLoading = false;
+  })();
+}
+
+// Find the band with the most dark/light transitions (text-like) in the lower part of the vehicle
+function locatePlate(img, w, h) {
+  const d = img.data, gray = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) gray[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
+  let sum = 0; for (let i = 0; i < gray.length; i++) sum += gray[i];
+  const th = sum / gray.length;
+  const rows = new Float32Array(h);
+  for (let y = 0; y < h; y++) { let c = 0; for (let x = 1; x < w; x++) if ((gray[y * w + x] > th) !== (gray[y * w + x - 1] > th)) c++; rows[y] = c; }
+  const win = Math.max(3, Math.round(h * 0.12)), sm = new Float32Array(h);
+  for (let y = 0; y < h; y++) { let s = 0, n = 0; for (let k = -win; k <= win; k++) if (rows[y + k] !== undefined) { s += rows[y + k]; n++; } sm[y] = s / n; }
+  let best = 0; for (let y = 1; y < h; y++) if (sm[y] > sm[best]) best = y;
+  if (sm[best] < 6) return null;
+  let y0 = best, y1 = best;
+  while (y0 > 0 && sm[y0 - 1] > sm[best] * 0.45 && best - y0 < h * 0.35) y0--;
+  while (y1 < h - 1 && sm[y1 + 1] > sm[best] * 0.45 && y1 - best < h * 0.35) y1++;
+  const cols = new Float32Array(w);
+  for (let x = 0; x < w; x++) { let c = 0; for (let y = Math.max(1, y0); y <= y1; y++) if ((gray[y * w + x] > th) !== (gray[(y - 1) * w + x] > th)) c++; cols[x] = c; }
+  const cmax = Math.max(...cols); let x0 = 0, x1 = w - 1;
+  while (x0 < w - 1 && cols[x0] < cmax * 0.25) x0++;
+  while (x1 > x0 && cols[x1] < cmax * 0.25) x1--;
+  if (x1 - x0 < w * 0.15) return null;
+  const px = Math.round((x1 - x0) * 0.08), py = Math.round((y1 - y0) * 0.25);
+  return { x: Math.max(0, x0 - px), y: Math.max(0, y0 - py), w: Math.min(w, x1 + px) - Math.max(0, x0 - px), h: Math.min(h, y1 + py) - Math.max(0, y0 - py) };
+}
+
+function similarity(a, b) {   // LCS ratio
+  const m = a.length, n = b.length; if (!m || !n) return 0;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+  return 2 * dp[m][n] / (m + n);
+}
+function parsePlate(raw) {
+  const txt = raw.replace(/[|\[\]{}()_~"'`.,:;\-]/g, " ").replace(/[Oo]/g, "0");
+  const flat = txt.replace(/\s+/g, "");
+  const m = flat.match(/(\d?[ก-ฮ]{1,2})(\d{1,4})/);
+  if (!m) return null;
+  let prov = "", best = 0;
+  const thai = txt.replace(/[^ก-๙]/g, "");
+  if (thai.length >= 3) PROVINCES.forEach(p => { const s = Math.max(similarity(thai, p), ...txt.split(/\s+/).filter(x => x.length >= 3).map(x => similarity(x.replace(/[^ก-๙]/g, ""), p))); if (s > best) { best = s; prov = p; } });
+  return { text: `${m[1]} ${m[2]}`, prov: best >= 0.6 ? prov : "" };
+}
+
+
+// grayscale → stretch contrast → Otsu black/white → dark text on white → white margin
+function prepForOCR(src, sx, sy, sw, sh, targetH) {
+  const up = Math.max(1, targetH / sh), w = Math.max(1, Math.round(sw * up)), h = Math.max(1, Math.round(sh * up)), pad = 14;
+  const c = document.createElement("canvas"); c.width = w + pad * 2; c.height = h + pad * 2;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingQuality = "high";
+  g.drawImage(src, sx, sy, sw, sh, pad, pad, w, h);
+  const img = g.getImageData(pad, pad, w, h), d = img.data, n = w * h, gray = new Uint8Array(n), hist = new Array(256).fill(0);
+  for (let i = 0; i < n; i++) { const v = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10 | 0; gray[i] = v; hist[v]++; }
+  let lo = 0, hi = 255, acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > n * 0.02) { lo = v; break; } }
+  acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > n * 0.02) { hi = v; break; } }
+  const span = Math.max(1, hi - lo), h2 = new Array(256).fill(0);
+  for (let i = 0; i < n; i++) { const v = Math.max(0, Math.min(255, ((gray[i] - lo) * 255 / span) | 0)); gray[i] = v; h2[v]++; }
+  let sumAll = 0; for (let v = 0; v < 256; v++) sumAll += v * h2[v];
+  let wB = 0, sumB = 0, best = 0, th = 128;
+  for (let v = 0; v < 256; v++) { wB += h2[v]; if (!wB) continue; const wF = n - wB; if (!wF) break; sumB += v * h2[v];
+    const mB = sumB / wB, mF = (sumAll - sumB) / wF, between = wB * wF * (mB - mF) ** 2; if (between > best) { best = between; th = v; } }
+  // decide polarity from the middle of the plate (car paint around it must not decide)
+  let dark = 0, cnt = 0;
+  for (let y = Math.floor(h * 0.2); y < Math.ceil(h * 0.6); y++) for (let x = Math.floor(w * 0.25); x < Math.ceil(w * 0.75); x++) { cnt++; if (gray[y * w + x] <= th) dark++; }
+  const invert = dark > cnt * 0.55;   // plate background should be white
+  for (let i = 0; i < n; i++) { let on = gray[i] <= th; if (invert) on = !on; const v = on ? 0 : 255; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; d[i * 4 + 3] = 255; }
+  g.putImageData(img, pad, pad);
+  return c;
+}
+
+function bestProvince(txt) {
+  const thai = (txt || "").replace(/[^ก-๙]/g, "");
+  if (thai.length < 2) return "";
+  let prov = "", best = 0;
+  PROVINCES.forEach(p => { const s = similarity(thai, p); if (s > best) { best = s; prov = p; } });
+  return best >= 0.55 ? prov : "";
+}
+function parseReg(txt) {
+  const flat = (txt || "").replace(/[^ก-ฮ0-9]/g, "");
+  const m = flat.match(/(\d?)([ก-ฮ]{1,3})(\d{1,4})/);
+  if (!m) return "";
+  const letters = m[2].length === 3 ? m[2].slice(1) : m[2];   // a stray mark often reads as an extra letter
+  return `${m[1]}${letters} ${m[3]}`;
+}
+// letters + digits, and either 3–4 digits or a leading digit (e.g. 7กท 88)
+const plausible = reg => !!reg && /[ก-ฮ]/.test(reg) && (reg.replace(/\D/g, "").length >= 3 || /^\d[ก-ฮ]/.test(reg) && /\d$/.test(reg));
+
+// Find the registration line and province line inside a black/white plate image
+function segmentLines(bin) {
+  const pad = 14, W = bin.width - pad * 2, H = bin.height - pad * 2;
+  const d = bin.getContext("2d", { willReadFrequently: true }).getImageData(pad, pad, W, H).data;
+  const dark = (x, y) => d[(y * W + x) * 4] < 128;
+  const colDark = new Float32Array(W);
+  for (let x = 0; x < W; x++) { let c = 0; for (let y = 0; y < H; y++) if (dark(x, y)) c++; colDark[x] = c / H; }
+  const useCol = Array.from(colDark, v => v < 0.8);           // ignore solid vertical borders
+  const nCols = useCol.filter(Boolean).length || 1;
+  const rowF = new Float32Array(H);
+  for (let y = 0; y < H; y++) { let c = 0; for (let x = 0; x < W; x++) if (useCol[x] && dark(x, y)) c++; rowF[y] = c / nCols; }
+  const isText = y => rowF[y] > 0.03 && rowF[y] < 0.6;        // solid border/background rows are excluded
+  const runs = []; let st = -1, gap = 0, maxGap = Math.max(2, H * 0.02);
+  for (let y = 0; y <= H; y++) {
+    if (y < H && isText(y)) { if (st < 0) st = y; gap = 0; }
+    else if (st >= 0) { if (y < H && ++gap <= maxGap) continue; runs.push([st, y - gap]); st = -1; gap = 0; }
+  }
+  const good = runs.filter(r => r[1] - r[0] >= H * 0.08);
+  if (!good.length) return null;
+  const reg = good.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
+  const rh = reg[1] - reg[0];
+  const prov = good.find(r => r[0] > reg[1] && r[1] - r[0] >= rh * 0.2 && r[0] - reg[1] < rh * 1.3) || null;
+  return { pad, W, H, d, useCol, reg, prov };
+}
+// Crop one text line out of the black/white plate, trimming borders, with a white margin
+function cropLine(bin, seg, y0, y1) {
+  const { pad, W, d } = seg, dark = (x, y) => d[(y * W + x) * 4] < 128;
+  const m = Math.round((y1 - y0) * 0.18); y0 = Math.max(0, y0 - m); y1 = Math.min(seg.H - 1, y1 + m);
+  const h = y1 - y0 + 1, colF = [];
+  for (let x = 0; x < W; x++) { let c = 0; for (let y = y0; y <= y1; y++) if (dark(x, y)) c++; colF.push(c / h); }
+  let x0 = 0, x1 = W - 1;
+  const ink = f => f > 0.02 && f < 0.75;
+  while (x0 < W - 1 && !ink(colF[x0])) x0++;
+  while (x1 > x0 && !ink(colF[x1])) x1--;
+  // drop leftover border columns at the edges
+  while (x0 < x1 && colF[x0] > 0.6) x0++;
+  while (x1 > x0 && colF[x1] > 0.6) x1--;
+  const out = document.createElement("canvas"), mp = 16;
+  out.width = x1 - x0 + 1 + mp * 2; out.height = h + mp * 2;
+  const g = out.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, out.width, out.height);
+  g.drawImage(bin, pad + x0, pad + y0, x1 - x0 + 1, h, mp, mp, x1 - x0 + 1, h);
+  // whiten any solid dark blobs touching the left/right edges (plate frame remnants)
+  return out;
+}
+
+// Read a plate inside (sx,sy,sw,sh) of the video frame
+async function readRegion(sx, sy, sw, sh) {
+  const scale = Math.min(1, 640 / sw), cw = Math.max(1, Math.round(sw * scale)), ch = Math.max(1, Math.round(sh * scale));
+  const c1 = document.createElement("canvas"); c1.width = cw; c1.height = ch;
+  const g1 = c1.getContext("2d", { willReadFrequently: true }); g1.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+  const loc = locatePlate(g1.getImageData(0, 0, cw, ch), cw, ch) || { x: 0, y: 0, w: cw, h: ch * 0.5 };
+  // the strongest text band is usually the registration line: widen it to take in the frame and province line
+  const ex0 = Math.max(0, loc.x - loc.w * 0.12), ex1 = Math.min(cw, loc.x + loc.w * 1.12);
+  const ey0 = Math.max(0, loc.y - loc.h * 0.5), ey1 = Math.min(ch, loc.y + loc.h * 2.0);
+  const px = sx + ex0 / scale, py = sy + ey0 / scale, pw = (ex1 - ex0) / scale, ph = (ey1 - ey0) / scale;
+  const up = Math.min(4, Math.max(1, 120 / (loc.h / scale)));   // registration text ≈ 120 px tall
+  const bin = prepForOCR(video, px, py, pw, ph, ph * up);
+  const seg = segmentLines(bin);
+  let top, bot;
+  if (seg) {
+    top = cropLine(bin, seg, seg.reg[0], seg.reg[1]);
+    bot = seg.prov ? cropLine(bin, seg, seg.prov[0], seg.prov[1]) : null;
+  } else {
+    top = prepForOCR(video, px, py, pw, ph * 0.6, 110);
+    bot = prepForOCR(video, px, py + ph * 0.55, pw, ph * 0.45, 80);
+  }
+  const r1 = await ocrP.recognize(top);
+  const r2 = bot ? await ocrV.recognize(bot) : { data: { text: "" } };
+  const t1 = (r1.data.text || "").trim(), t2 = (r2.data.text || "").trim();
+  let reg = parseReg(t1), prov = bestProvince(t2);
+  if (!reg) { const alt = parsePlate(t1 + " " + t2); if (alt) { reg = alt.text; prov = prov || alt.prov; } }
+  plateTries++;
+  if (S.plateDebug) showDebug(px, py, pw, ph, top, bot || top, t1, t2, reg, prov);
+  return { reg, prov, raw: t1 + " | " + t2 };
+}
+
+function showDebug(px, py, pw, ph, top, bot, t1, t2, reg, prov) {
+  const dc = $("plateDbg"), W = 480, sh = Math.round(W * ph / pw) || 1;
+  const h1 = Math.round(W * top.height / top.width), h2 = Math.round(W * bot.height / bot.width);
+  dc.width = W; dc.height = sh + h1 + h2 + 8;
+  const g = dc.getContext("2d");
+  g.fillStyle = "#000"; g.fillRect(0, 0, dc.width, dc.height);
+  g.drawImage(video, px, py, pw, ph, 0, 0, W, sh);
+  g.drawImage(top, 0, sh + 4, W, h1);
+  g.drawImage(bot, 0, sh + h1 + 8, W, h2);
+  $("plateRaw").textContent = `ครั้งที่ ${plateTries} · ขนาดป้ายในภาพ ${Math.round(pw)}×${Math.round(ph)} px · อ่านบรรทัดบน: "${t1}" · บรรทัดล่าง: "${t2}" → ${reg || "ไม่พบรูปแบบป้าย"} ${prov}` + (pw < 120 ? " ⚠️ ป้ายเล็กเกินไป เข้าใกล้ขึ้นหรือใช้ 1080p/ซูม" : "");
+}
+
+function setPlateHint(msg) {
+  if (Date.now() - plateHintAt < 1500) return;
+  plateHintAt = Date.now();
+  if (ocrP) $("plateStatus").textContent = msg;
+}
+
+function schedulePlateScan() {
+  if (!S.plateOn) return;
+  if (!ocrP) { loadOCR(); return; }
+  if (plateBusy || video.readyState < 2) return;
+  const minW = canvas.width * S.plateMin / 100;
+  const vehicles = tracks.filter(t => VEHICLES.has(t.cls) && t.missed === 0);
+  if (!vehicles.length) return setPlateHint("✅ พร้อม · ยังไม่เห็นรถในภาพ");
+  const cands = vehicles.filter(t => t.box[2] >= minW && (!t.plate || t.plate.n < 2 || t.id === lockedId) && (t.plateTries || 0) < 15);
+  if (!cands.length) return setPlateHint(`✅ พร้อม · เห็นรถ ${vehicles.length} คัน แต่ยังไกลเกินไป (ต้องกว้างกว่า ${S.plateMin}% ของจอ)`);
+  cands.sort((a, b) => (b.id === lockedId) - (a.id === lockedId) || b.box[2] * b.box[3] - a.box[2] * a.box[3]);
+  setPlateHint(`🔎 กำลังอ่านป้ายรถ #${cands[0].id}…`);
+  readPlate(cands[0]);
+}
+
+async function readPlate(t) {
+  plateBusy = true; t.plateTries = (t.plateTries || 0) + 1;
+  try {
+    const [bx, by, bw, bh] = t.box;
+    const sx = Math.max(0, bx + bw * 0.08), sy = Math.max(0, by + bh * 0.3);
+    const sw = Math.min(video.videoWidth - sx, bw * 0.84), sh = Math.min(video.videoHeight - sy, bh * 0.7);
+    if (sw < 40 || sh < 20) return;
+    const r = await readRegion(sx, sy, sw, sh);
+    if (!r.reg) return;
+    t.plateReads = t.plateReads || {};
+    const rr = t.plateReads[r.reg] = t.plateReads[r.reg] || { n: 0, prov: "" };
+    rr.n++; if (r.prov) rr.prov = r.prov;
+    if (plausible(r.reg)) {
+      const best = Object.entries(t.plateReads).filter(e => plausible(e[0])).sort((a, b) => b[1].n - a[1].n)[0];
+      const changed = !t.plate || t.plate.text !== best[0];
+      t.plate = { text: best[0], prov: best[1].prov, n: best[1].n };
+      if (changed) logPlate(t);
+    }
+  } catch (e) { $("plateStatus").textContent = "❌ อ่านป้ายผิดพลาด: " + (e && e.message || e); }
+  finally { plateBusy = false; }
+}
+
+// Manual scan: aim the plate inside the centre box
+async function scanCenter() {
+  if (!stream) return;
+  if (!ocrP) { loadOCR(); return toast("กำลังโหลดตัวอ่านป้าย ลองใหม่อีกครั้งในไม่กี่วินาที", 2500); }
+  if (plateBusy) return toast("กำลังอ่านอยู่…");
+  const vw = video.videoWidth, vh = video.videoHeight, gw = vw * 0.44, gh = vh * 0.28;
+  const sx = (vw - gw) / 2, sy = (vh - gh) / 2;
+  scanGuide = { x: sx, y: sy, w: gw, h: gh, until: Date.now() + 4000 };
+  toast("🔍 เล็งป้ายให้อยู่ในกรอบ…", 1500);
+  plateBusy = true;
+  let found = null;
+  try {
+    await new Promise(r => setTimeout(r, 700));
+    for (let i = 0; i < 4 && !found; i++) {
+      const r = await readRegion(sx, sy, gw, gh);
+      if (plausible(r.reg)) found = r;
+    }
+  } catch (e) { toast("อ่านป้ายผิดพลาด"); }
+  plateBusy = false; scanGuide = null;
+  if (!found) return toast("อ่านป้ายไม่ออก — ลองเข้าใกล้ขึ้น ถือให้นิ่ง หรือเปิด 'แสดงภาพที่ใช้อ่านป้าย' เพื่อดูสาเหตุ", 4000);
+  logPlate({ plate: { text: found.reg, prov: found.prov }, cls: "manual", id: 0 });
+  toast(`🚘 ${found.reg} ${found.prov}`, 3000);
+}
+$("scanBtn").onclick = scanCenter;
+
+function logPlate(t) {
+  const entry = { time: new Date(), plate: t.plate.text, prov: t.plate.prov, cls: t.cls, id: t.id,
+    lat: gpsLast ? gpsLast.coords.latitude : null, lon: gpsLast ? gpsLast.coords.longitude : null,
+    spd: gpsLast ? kmh(gpsLast) : null, clip: seg ? seg.name : "" };
+  if (plateLog.some(e => e.plate === entry.plate && entry.time - e.time < 60000)) return;   // same plate within 1 min
+  plateLog.unshift(entry);
+  if (seg) seg.plates.push(entry);
+  $("platePill").style.display = "block"; $("platePill").textContent = `🚘 ${entry.plate}${entry.prov ? " " + entry.prov : ""}`;
+  renderPlates();
+}
+function renderPlates() {
+  $("plateList").innerHTML = plateLog.length ? plateLog.slice(0, 50).map(e =>
+    `<li style="cursor:default"><span>🚘 ${e.plate} ${e.prov}</span><span>${e.time.toLocaleTimeString("th-TH", { hour12: false })}</span></li>`).join("") : `<li style="cursor:default;color:var(--mute)">ยังไม่พบป้าย</li>`;
+}
+const csvOf = list => "﻿" + "เวลา,ป้ายทะเบียน,จังหวัด,ประเภทรถ,ละติจูด,ลองจิจูด,ความเร็ว(km/h),คลิป\n" +
+  list.slice().reverse().map(e => [e.time.toLocaleString("th-TH", { hour12: false }), e.plate, e.prov, e.cls, e.lat ?? "", e.lon ?? "", e.spd ?? "", e.clip].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n") + "\n";
+$("plateExport").onclick = () => {
+  if (!plateLog.length) return toast("ยังไม่มีป้ายที่อ่านได้");
+  const ok = saveText(`plates_${stamp()}.csv`, "text/csv", csvOf(plateLog));
+  toast(ok ? "💾 บันทึกแล้ว (Download › CamTrax)" : "บันทึกไม่สำเร็จ");
+};
+$("plateOn").addEventListener("change", () => { if (S.plateOn) loadOCR(); });
+
+// ---------- Photo ----------
+$("photoBtn").onclick = () => {
+  if (!stream) return;
+  const c = document.createElement("canvas"); c.width = video.videoWidth; c.height = video.videoHeight;
+  composeTo(c);
+  const dataUrl = c.toDataURL("image/jpeg", 0.92), name = `IMG_${stamp()}.jpg`;
+  $("flash").style.opacity = .8; setTimeout(() => $("flash").style.opacity = 0, 120);
+  if (Bridge) {
+    setTimeout(() => { const ok = Bridge.savePhoto(name, dataUrl.split(",")[1]); toast(ok ? "📷 บันทึกภาพแล้ว (แกลเลอรี › CamTrax)" : "บันทึกภาพไม่สำเร็จ"); }, 30);
+  } else { downloadUrl(dataUrl, name); toast("📷 ดาวน์โหลดภาพแล้ว"); }
+};
+function downloadUrl(url, name) { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+
+// ---------- Loop video recording ----------
+let recording = false, carMode = false, recCanvas = null, recStream = null, recDrawH = null, seg = null, segTimer = null, recStart = 0, recClock = null;
+const MIME = ["video/mp4;codecs=avc1,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "video/webm";
+const EXT = MIME.startsWith("video/mp4") ? "mp4" : "webm";
+let micStream = null;
+
+// ---------- Microphone ----------
+async function ensureMic() {
+  if (micStream) return true;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true }, video: false });
+    if (recStream) micStream.getAudioTracks().forEach(t => recStream.addTrack(t));
+    return true;
+  } catch (e) {
+    toast("ใช้ไมโครโฟนไม่ได้ — ตรวจสอบสิทธิ์ไมโครโฟน", 3000);
+    S.audioOn = false; $("audioOn").checked = false; saveS(); markMic(); return false;
+  }
+}
+function stopMic() { if (micStream) { micStream.getTracks().forEach(t => { if (recStream) recStream.removeTrack(t); t.stop(); }); micStream = null; } }
+function markMic() { $("micBtn").classList.toggle("off", !S.audioOn); $("micBtn").textContent = S.audioOn ? "🎤" : "🔇"; }
+async function setAudio(on) {
+  S.audioOn = on; $("audioOn").checked = on; saveS(); markMic();
+  if (!recording) return;
+  if (on) { const had = !!micStream; if (await ensureMic()) { micStream.getAudioTracks().forEach(t => t.enabled = true); toast(had ? "🎤 เปิดเสียง" : "🎤 จะเริ่มอัดเสียงในคลิปถัดไป", 2200); } }
+  else if (micStream) { micStream.getAudioTracks().forEach(t => t.enabled = false); toast("🔇 ปิดเสียงแล้ว"); }
+}
+$("micBtn").onclick = () => setAudio(!S.audioOn);
+$("audioOn").addEventListener("change", e => setAudio(e.target.checked));
+markMic();
+const bitrate = () => S.res === "1080" ? 6e6 : 3e6;
+
+function blobToB64(blob) { return new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(",")[1] || ""); fr.readAsDataURL(blob); }); }
+
+function startSegment() {
+  const name = `loop_${stamp()}.${EXT}`;
+  const quota = +S.quota * 1e9, reserve = Math.round(bitrate() / 8 * +S.segLen * 60 * 1.15);
+  const s = { name, keep: false, chunks: [], q: Promise.resolve(), id: null, track: [], plates: [] };
+  if (Bridge) {
+    s.id = Bridge.beginFile(name, MIME.split(";")[0], quota, reserve);
+    if (!s.id) { toast("เปิดไฟล์ไม่ได้ — พื้นที่อาจเต็ม", 3000); stopRecording(); return; }
+  }
+  const rec = new MediaRecorder(recStream, { mimeType: MIME, videoBitsPerSecond: bitrate(), audioBitsPerSecond: 96000 });
+  s.rec = rec;
+  rec.ondataavailable = e => {
+    if (!e.data || !e.data.size) return;
+    if (Bridge) s.q = s.q.then(() => blobToB64(e.data)).then(b => Bridge.appendChunk(s.id, b));
+    else s.chunks.push(e.data);
+  };
+  rec.onstop = () => {
+    s.q.then(() => {
+      let saved = (s.keep ? s.name.replace(/^loop_/, "keep_") : s.name);
+      if (Bridge) { saved = Bridge.finishFile(s.id, s.keep) || saved; if (s.keep) toast("🔒 เก็บคลิปแล้ว: " + saved, 2500); refreshUsage(); }
+      else downloadUrl(URL.createObjectURL(new Blob(s.chunks, { type: MIME })), saved);
+      // companion files share the clip's name, so they are deleted together with it
+      const base = saved.replace(/\.[^.]+$/, "");
+      if (s.track.length >= 2) saveText(base + ".gpx", "application/gpx+xml", buildGPX(s.track, base));
+      if (s.plates.length) saveText(base + ".plates.csv", "text/csv", csvOf(s.plates));
+    });
+  };
+  rec.start(2000);
+  seg = s;
+  $("keepBtn").classList.remove("active");
+  segTimer = setTimeout(rotateSegment, +S.segLen * 60000);
+}
+function rotateSegment() { const old = seg; startSegment(); if (old && old.rec.state !== "inactive") old.rec.stop(); }
+
+let recStarting = false;
+async function startRecording() {
+  if (recording || recStarting || !stream) return;
+  recStarting = true;
+  try { await startRecordingInner(); } finally { recStarting = false; }
+}
+async function startRecordingInner() {
+  if (!window.MediaRecorder) return toast("เครื่องนี้ไม่รองรับการอัดวิดีโอ", 3000);
+  recCanvas = document.createElement("canvas"); recCanvas.width = video.videoWidth; recCanvas.height = video.videoHeight;
+  recStream = recCanvas.captureStream(30);
+  if (S.audioOn && await ensureMic()) micStream.getAudioTracks().forEach(t => { t.enabled = true; recStream.addTrack(t); });
+  const drawRec = () => { if (!recording) return; composeTo(recCanvas); recDrawH = requestAnimationFrame(drawRec); };
+  recording = true; drawRec();
+  startGPS();
+  startSegment();
+  recStart = Date.now();
+  recClock = setInterval(() => { const s = Math.floor((Date.now() - recStart) / 1000); $("recTime").textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 500);
+  $("recBtn").classList.add("on"); $("recPill").classList.add("on"); $("keepBtn").disabled = false;
+  if (Bridge) Bridge.keepScreenOn(true);
+  if (!Bridge) toast("ในเบราว์เซอร์: แต่ละคลิปจะถูกดาวน์โหลด (ไม่ลบวนอัตโนมัติ)", 3500);
+}
+function stopRecording() {
+  if (!recording) return;
+  recording = false; clearTimeout(segTimer); clearInterval(recClock); cancelAnimationFrame(recDrawH);
+  if (seg && seg.rec.state !== "inactive") seg.rec.stop();
+  seg = null;
+  setTimeout(() => { if (!recording) stopMic(); }, 500);
+  $("recBtn").classList.remove("on"); $("recPill").classList.remove("on"); $("keepBtn").disabled = true; $("keepBtn").classList.remove("active");
+  if (Bridge && !carMode) Bridge.keepScreenOn(false);
+  if (carMode) setCarMode(false);
+  toast("หยุดอัดแล้ว");
+}
+$("recBtn").onclick = () => recording ? stopRecording() : startRecording();
+$("keepBtn").onclick = () => { if (!seg) return; seg.keep = !seg.keep; $("keepBtn").classList.toggle("active", seg.keep); toast(seg.keep ? "🔒 คลิปนี้จะไม่ถูกลบ" : "ยกเลิกการล็อกคลิป"); };
+
+// ---------- Car camcorder mode ----------
+async function setCarMode(on) {
+  carMode = on;
+  $("carToggle").textContent = on ? "ปิดโหมดกล้องติดรถ" : "เปิดโหมดกล้องติดรถ";
+  $("carToggle").classList.toggle("on", on);
+  if (on) {
+    if (!stream) await startCam();
+    if (!stream) { carMode = false; return; }
+    startRecording();
+    if (Bridge) Bridge.keepScreenOn(true);
+    toast("🚗 โหมดกล้องติดรถ: อัดวนอัตโนมัติ", 2500);
+    $("drawer").classList.remove("open");
+  } else {
+    if (recording) { carMode = false; stopRecording(); }
+    if (Bridge) Bridge.keepScreenOn(false);
+  }
+}
+$("carToggle").onclick = () => setCarMode(!carMode);
+$("carBtn").onclick = () => setCarMode(true);
+
+// ---------- Storage usage ----------
+function refreshUsage() {
+  const quota = +S.quota * 1e9;
+  if (!Bridge) { $("usageText").textContent = "การจัดการพื้นที่ใช้ได้เฉพาะในแอป Android"; return; }
+  try {
+    const u = JSON.parse(Bridge.getUsage());
+    $("quotaBar").style.width = Math.min(100, u.loopBytes / quota * 100) + "%";
+    $("usageText").textContent = `คลิปวน ${u.loopCount} ไฟล์ ใช้ ${fmtBytes(u.loopBytes)} / ${S.quota} GB · คลิปล็อก ${u.keepCount} ไฟล์ (${fmtBytes(u.keepBytes)}) · เครื่องว่าง ${fmtBytes(u.freeBytes)}`;
+    $("storePill").style.display = recording ? "block" : "none";
+    $("storePill").textContent = `💾 ${fmtBytes(u.loopBytes)} / ${S.quota} GB`;
+  } catch (e) {}
+}
+refreshUsage(); setInterval(refreshUsage, 15000);
+
+// ---------- Gallery: view saved photos & videos ----------
+const MEDIA_HOST = "https://appassets.androidplatform.net/camtrax";
+let gItems = [], gFilter = "all", gView = [], vIdx = -1;
+const canGallery = () => Bridge && typeof Bridge.listMedia === "function";
+const fmtDur = ms => { const s = Math.round((ms || 0) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+const fmtDate = sec => new Date(sec * 1000).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+const isKeep = it => /^keep_/.test(it.name);
+
+function confirmBox(text) {
+  return new Promise(res => {
+    $("dlgText").textContent = text; $("dialog").classList.add("open");
+    const done = v => { $("dialog").classList.remove("open"); $("dlgYes").onclick = $("dlgNo").onclick = null; res(v); };
+    $("dlgYes").onclick = () => done(true); $("dlgNo").onclick = () => done(false);
+  });
+}
+
+function openGallery() {
+  $("drawer").classList.remove("open");
+  $("gallery").classList.add("open");
+  loadGallery();
+}
+function loadGallery() {
+  if (!canGallery()) {
+    $("gGrid").innerHTML = `<div class="gempty">ดูไฟล์ในหน้านี้ได้เฉพาะในแอป CamTrax บน Android (v1.3 ขึ้นไป)<br>ถ้าใช้บนเบราว์เซอร์ ไฟล์จะอยู่ในโฟลเดอร์ดาวน์โหลดของเครื่อง</div>`;
+    $("gInfo").textContent = ""; return;
+  }
+  try { gItems = JSON.parse(Bridge.listMedia()) || []; } catch (e) { gItems = []; }
+  renderGallery();
+}
+function renderGallery() {
+  gView = gItems.filter(it => gFilter === "all" || (gFilter === "keep" ? isKeep(it) : it.t === gFilter));
+  const total = gView.reduce((a, b) => a + (b.size || 0), 0);
+  $("gInfo").textContent = `${gView.length} ไฟล์ · ${fmtBytes(total)}`;
+  if (!gView.length) { $("gGrid").innerHTML = `<div class="gempty">ยังไม่มีไฟล์</div>`; return; }
+  $("gGrid").innerHTML = gView.map((it, i) => `
+    <div class="gitem" data-i="${i}">
+      <img loading="lazy" src="${MEDIA_HOST}/thumb/${it.t}/${it.id}" alt="" onerror="this.style.visibility='hidden'">
+      <span class="gtag">${it.t === "v" ? (isKeep(it) ? "🔒" : "🎬") : "📷"}</span>
+      <span class="gbadge">${it.t === "v" ? fmtDur(it.dur) + " · " : ""}${fmtDate(it.date)}</span>
+    </div>`).join("");
+}
+document.querySelectorAll("#gallery .tab").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#gallery .tab").forEach(x => x.classList.toggle("sel", x === b));
+  gFilter = b.dataset.f; renderGallery();
+});
+$("gGrid").onclick = e => { const el = e.target.closest(".gitem"); if (el) openViewer(+el.dataset.i); };
+$("galleryBtn").onclick = openGallery;
+$("gClose").onclick = () => { closeViewer(); $("gallery").classList.remove("open"); };
+
+function openViewer(i) {
+  if (i < 0 || i >= gView.length) return;
+  vIdx = i; const it = gView[i], url = `${MEDIA_HOST}/media/${it.t}/${it.id}`;
+  $("vMedia").innerHTML = it.t === "v" ? `<video src="${url}" controls autoplay playsinline></video>` : `<img src="${url}" alt="">`;
+  $("vName").textContent = `${it.name} · ${fmtBytes(it.size || 0)}`;
+  $("vKeep").style.display = it.t === "v" ? "" : "none";
+  $("vKeep").textContent = isKeep(it) ? "🔓 ปลดล็อก" : "🔒 ล็อก";
+  $("vPrev").disabled = i === 0; $("vNext").disabled = i === gView.length - 1;
+  $("viewer").classList.add("open");
+}
+function closeViewer() { $("vMedia").innerHTML = ""; $("viewer").classList.remove("open"); vIdx = -1; }
+$("vBack").onclick = closeViewer;
+$("vPrev").onclick = () => openViewer(vIdx - 1);
+$("vNext").onclick = () => openViewer(vIdx + 1);
+$("vOpen").onclick = () => { const it = gView[vIdx]; if (it && !Bridge.openExternal(it.t, it.id)) toast("ไม่มีแอปที่เปิดไฟล์นี้ได้"); };
+$("vShare").onclick = () => { const it = gView[vIdx]; if (it) Bridge.shareMedia(it.t, it.id); };
+$("vKeep").onclick = () => {
+  const it = gView[vIdx]; if (!it) return;
+  const name = Bridge.setKeep(it.id, !isKeep(it));
+  if (!name) return toast("เปลี่ยนสถานะไม่สำเร็จ");
+  it.name = name; toast(isKeep(it) ? "🔒 ล็อกแล้ว คลิปนี้จะไม่ถูกลบอัตโนมัติ" : "🔓 ปลดล็อกแล้ว");
+  const keepIdx = vIdx; renderGallery(); refreshUsage();
+  if (gFilter === "keep" && !isKeep(it)) closeViewer(); else openViewer(Math.min(keepIdx, gView.length - 1));
+};
+$("vDel").onclick = async () => {
+  const it = gView[vIdx]; if (!it) return;
+  if (!(await confirmBox(`ลบ ${it.t === "v" ? "วิดีโอ" : "ภาพ"} นี้ใช่ไหม?\n${it.name}`))) return;
+  if (!Bridge.deleteMedia(it.t, it.id)) return toast("ลบไม่สำเร็จ");
+  gItems = gItems.filter(x => !(x.t === it.t && x.id === it.id));
+  const next = vIdx; renderGallery(); refreshUsage(); toast("🗑 ลบแล้ว");
+  if (gView.length) openViewer(Math.min(next, gView.length - 1)); else closeViewer();
+};
+
+// ---------- Auto-start car mode ----------
+if (S.autoCar) setTimeout(() => setCarMode(true), 600);
+</script>
+</body>
+</html>
